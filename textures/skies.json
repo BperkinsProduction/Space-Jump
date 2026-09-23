@@ -1,0 +1,33 @@
+{
+  "sky": {
+    "elev": 38,
+    "azim": 150,
+    "sunU": 0.914794921875,
+    "sunV": 0.70947265625,
+    "fogHex": "#cacece"
+  },
+  "sunset": {
+    "elev": 3.0,
+    "azim": 190,
+    "sunU": 0.026611328125,
+    "sunV": 0.51708984375,
+    "fogHex": "#d0a379"
+  },
+  "night": {
+    "elev": -8,
+    "azim": 200,
+    "fogHex": "#0d1a31"
+  },
+  "underwater": {
+    "elev": 60,
+    "azim": 170,
+    "fogHex": "#30727e"
+  },
+  "candy": {
+    "elev": 12,
+    "azim": 175,
+    "sunU": 0.985107421875,
+    "sunV": 0.56396484375,
+    "fogHex": "#e6c3d5"
+  }
+}

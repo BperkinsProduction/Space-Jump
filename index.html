@@ -579,7 +579,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 
   // ---------- Three.js setup ----------
   const scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(0xc4e4ff, 0.009);
+  scene.fog = new THREE.FogExp2(0xc4e4ff, 0.0052);
 
   const camera = new THREE.PerspectiveCamera(65, innerWidth/innerHeight, 0.1, 500);
   camera.position.set(-8, 6, 0);
@@ -593,7 +593,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   // Filmic tone mapping — softer highlights, richer color response (the big "HD" switch)
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.2;
+  renderer.toneMappingExposure = 1.0;
   document.body.appendChild(renderer.domElement);
 
   function onResize() {
@@ -656,45 +656,174 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
   fill.position.set(-20, 20, -10);
   scene.add(fill);
 
-  // ---------- Gradient sky dome ----------
-  const skyGeo = new THREE.SphereGeometry(280, 28, 18);
+  // ---------- Sky: Blender-rendered 360° panoramas (gradient fallback until loaded) ----------
+  // Each theme has a physically based sky rendered in Blender Cycles (Nishita atmosphere +
+  // volumetric clouds). The dome crossfades between two panoramas during theme changes.
+  const skyGeo = new THREE.SphereGeometry(400, 48, 24);
+  const blankTex = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+  blankTex.needsUpdate = true;
   const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
+    depthWrite: false,
+    fog: false,
     uniforms: {
       topColor:    { value: new THREE.Color(0x3a80c8) },
       midColor:    { value: new THREE.Color(0x88ccff) },
-      bottomColor: { value: new THREE.Color(0xe2f0ff) }
+      bottomColor: { value: new THREE.Color(0xe2f0ff) },
+      texA: { value: blankTex },
+      texB: { value: blankTex },
+      rotA: { value: 0 },
+      rotB: { value: 0 },
+      mixAB: { value: 0 },
+      hasTex: { value: 0 }
     },
     vertexShader: `
-      varying vec3 vWP;
+      varying vec3 vDir;
       void main() {
+        vDir = position;
         vec4 wp = modelMatrix * vec4(position, 1.0);
-        vWP = wp.xyz;
         gl_Position = projectionMatrix * viewMatrix * wp;
       }`,
     fragmentShader: `
       uniform vec3 topColor;
       uniform vec3 midColor;
       uniform vec3 bottomColor;
-      varying vec3 vWP;
+      uniform sampler2D texA;
+      uniform sampler2D texB;
+      uniform float rotA, rotB, mixAB, hasTex;
+      varying vec3 vDir;
+      const float PI = 3.14159265359;
+      vec2 panoUV(vec3 d, float rot) {
+        return vec2(fract(atan(d.z, d.x) / (2.0 * PI) + 0.5 + rot),
+                    asin(clamp(d.y, -1.0, 1.0)) / PI + 0.5);
+      }
       void main() {
-        float h = normalize(vWP).y;
-        vec3 col = (h > 0.0)
+        vec3 d = normalize(vDir);
+        float h = d.y;
+        vec3 grad = (h > 0.0)
           ? mix(midColor, topColor, smoothstep(0.0, 0.7, h))
           : mix(midColor, bottomColor, -h);
-        gl_FragColor = vec4(col, 1.0);
+        vec3 a = texture2D(texA, panoUV(d, rotA)).rgb;
+        vec3 b = texture2D(texB, panoUV(d, rotB)).rgb;
+        vec3 pano = mix(a, b, mixAB);
+        gl_FragColor = vec4(mix(grad, pano, hasTex), 1.0);
+        #include <colorspace_fragment>
       }`
   });
   const sky = new THREE.Mesh(skyGeo, skyMat);
+  sky.renderOrder = -1;
   scene.add(sky);
 
-  // ---------- Sun disc (visual only — the light is the directional sun above) ----------
+  // ---------- Sun disc (only used with the gradient fallback sky) ----------
   const sunDisc = new THREE.Mesh(
     new THREE.SphereGeometry(4, 24, 16),
     new THREE.MeshBasicMaterial({ color: 0xfff5c0 })
   );
   sunDisc.position.set(45, 55, -80);
   scene.add(sunDisc);
+
+  // Sun direction the directional light uses (world space, unit). Themes lerp it.
+  const sunDir = new THREE.Vector3(15, 40, 15).normalize();
+  const sunDirTarget = sunDir.clone();
+
+  // Panorama metadata from Blender (sun position in each panorama, horizon color)
+  let skyMeta = null;
+  const skyTextures = {};
+  const texLoader = new THREE.TextureLoader();
+  fetch('textures/skies.json').then(r => r.ok ? r.json() : null).then(m => {
+    skyMeta = m;
+    if (!m) return;
+    // distance fog matches each panorama's measured horizon color
+    for (const t of THEMES) {
+      const sm = m[t.sky];
+      if (sm && sm.fogHex) { t.fog = parseInt(sm.fogHex.slice(1), 16); t.clear = t.fog; }
+    }
+    targetColors = buildTargetColors(targetTheme);
+    themeState.fog.copy(targetColors.fog);
+    themeState.clear.copy(targetColors.clear);
+    applyThemeState();
+    loadSkyTexture(targetTheme.sky, () => showSkyInstant(targetTheme));
+    // quietly preload the other worlds' skies
+    setTimeout(() => THEMES.forEach(t => loadSkyTexture(t.sky)), 4000);
+  }).catch(() => {});
+
+  function loadSkyTexture(key, cb) {
+    if (!key) return;
+    if (skyTextures[key]) { if (skyTextures[key].image) cb && cb(skyTextures[key]); return; }
+    const tex = texLoader.load(`textures/sky_${key}.jpg`, (t) => cb && cb(t));
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.generateMipmaps = false;
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.wrapS = THREE.RepeatWrapping;
+    skyTextures[key] = tex;
+  }
+
+  // Camera looks down +X. Place each theme's sun at a chosen azimuth (radians, 0 = straight
+  // ahead, + = to the right) and compute the panorama rotation that puts it there.
+  const SUN_VIEW_AZIM = { sky: 2.55, sunset: -0.28, night: 2.4, underwater: 2.6, candy: -0.35 };
+  function panoRotFor(key) {
+    const m = skyMeta && skyMeta[key];
+    if (!m || m.sunU === undefined) return 0;
+    const target = SUN_VIEW_AZIM[key] ?? 0;
+    return m.sunU - 0.5 - target / (Math.PI * 2);
+  }
+  function sunDirFor(key) {
+    const m = skyMeta && skyMeta[key];
+    const az = SUN_VIEW_AZIM[key] ?? 0.8;
+    const elev = THREE.MathUtils.degToRad(Math.max(m ? m.elev : 40, 14));
+    return new THREE.Vector3(Math.cos(elev) * Math.cos(az), Math.sin(elev), Math.cos(elev) * Math.sin(az)).normalize();
+  }
+  let skyFade = 0; // 0..1 progress of a panorama crossfade
+  function showSkyInstant(theme) {
+    const tex = skyTextures[theme.sky];
+    if (!tex || !tex.image) return;
+    skyMat.uniforms.texA.value = tex;
+    skyMat.uniforms.rotA.value = panoRotFor(theme.sky);
+    skyMat.uniforms.mixAB.value = 0;
+    skyMat.uniforms.hasTex.value = 1;
+    sunDisc.visible = false;
+    sunDir.copy(sunDirFor(theme.sky));
+    sunDirTarget.copy(sunDir);
+    rebuildEnvFrom(tex);
+    skyFade = 0;
+  }
+  function crossfadeSkyTo(theme) {
+    loadSkyTexture(theme.sky, (tex) => {
+      if (targetTheme !== theme) return;
+      if (!skyMat.uniforms.hasTex.value) { showSkyInstant(theme); return; }
+      skyMat.uniforms.texB.value = tex;
+      skyMat.uniforms.rotB.value = panoRotFor(theme.sky);
+      skyMat.uniforms.mixAB.value = 0;
+      sunDirTarget.copy(sunDirFor(theme.sky));
+      skyFade = 0.0001;
+      rebuildEnvFrom(tex);
+    });
+  }
+  function updateSkyFade(dt) {
+    sunDir.lerp(sunDirTarget, Math.min(1, dt * 0.8)).normalize();
+    if (skyFade <= 0) return;
+    skyFade = Math.min(1, skyFade + dt / 2.4);
+    skyMat.uniforms.mixAB.value = skyFade;
+    if (skyFade >= 1) {
+      skyMat.uniforms.texA.value = skyMat.uniforms.texB.value;
+      skyMat.uniforms.rotA.value = skyMat.uniforms.rotB.value;
+      skyMat.uniforms.mixAB.value = 0;
+      skyFade = 0;
+    }
+  }
+  // Image-based lighting + reflections from the actual sky panorama
+  let envRT = null;
+  function rebuildEnvFrom(tex) {
+    try {
+      const pmremGen = new THREE.PMREMGenerator(renderer);
+      const rt = pmremGen.fromEquirectangular(tex);
+      pmremGen.dispose();
+      if (envRT) envRT.dispose();
+      envRT = rt;
+      scene.environment = rt.texture;
+    } catch (e) { console.warn('env rebuild failed', e); }
+  }
 
   // ---------- Cloud system (replaces the lava) ----------
   const FALL_Y = -12; // death threshold (animal puffs away if it falls this low)
@@ -748,12 +877,31 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
     );
   }
 
+  // Upgrade to Blender-made cumulus (baked sky lighting in vertex colors) once loaded
+  const cloudMat = new THREE.MeshBasicMaterial({ vertexColors: true, color: 0xffffff, toneMapped: false, fog: true });
+  new GLTFLoader().load('models/clouds.glb', (gltf) => {
+    const shapes = [];
+    gltf.scene.traverse(o => { if (o.isMesh) shapes.push(o.geometry); });
+    if (!shapes.length) return;
+    cloudMat.color.copy(themeState.cloud);
+    for (const c of clouds) {
+      c.group.traverse(o => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
+      c.group.clear();
+      const m = new THREE.Mesh(shapes[Math.floor(Math.random() * shapes.length)], cloudMat);
+      const low = c.group.position.y < FALL_Y + 6;
+      const sc = low ? 1.5 + Math.random() * 1.3 : 1.0 + Math.random() * 1.2;
+      m.scale.set(sc * (0.9 + Math.random() * 0.3), sc * (0.8 + Math.random() * 0.3), sc);
+      m.rotation.y = Math.random() * Math.PI * 2;
+      c.group.add(m);
+    }
+  }, undefined, () => {});
+
   // ---------- Theme worlds ----------
   // Each theme defines the sky gradient, fog, ambient + sun light, sun disc, and cloud colors.
   // Themes change at level milestones with a smooth 2-second blend.
   const THEMES = [
     {
-      name: 'Sky', fromLevel: 1,
+      name: 'Sky', sky: 'sky', fromLevel: 1,
       skyTop: 0x3a80c8, skyMid: 0x88ccff, skyBot: 0xe2f0ff,
       fog:    0xc4e4ff, clear:  0x88ccff,
       ambient: 0xb6d0ee, ambientI: 0.8,
@@ -761,23 +909,23 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
       cloud:   0xffffff, cloudEm: 0xffffff
     },
     {
-      name: 'Sunset', fromLevel: 6,
+      name: 'Sunset', sky: 'sunset', fromLevel: 6,
       skyTop: 0x5a3a8a, skyMid: 0xff9c63, skyBot: 0xffd070,
       fog:    0xff9c63, clear:  0xff9c63,
       ambient: 0xe5a878, ambientI: 0.75,
       sun:     0xffba80, sunI:    1.15, sunDisc: 0xff7848,
-      cloud:   0xffa878, cloudEm: 0xff7048
+      cloud:   0xffd4b4, cloudEm: 0xff7048
     },
     {
-      name: 'Aurora Night', fromLevel: 11,
+      name: 'Aurora Night', sky: 'night', fromLevel: 11,
       skyTop: 0x06061a, skyMid: 0x0a1a3a, skyBot: 0x1a4a6a,
       fog:    0x0a1a3a, clear:  0x06061a,
       ambient: 0x506890, ambientI: 0.6,
       sun:     0xc8d0f0, sunI:    0.85, sunDisc: 0xeeeeff,
-      cloud:   0x4060a0, cloudEm: 0x6080c0
+      cloud:   0x34467a, cloudEm: 0x6080c0
     },
     {
-      name: 'Underwater', fromLevel: 16,
+      name: 'Underwater', sky: 'underwater', fromLevel: 16,
       skyTop: 0x0a4060, skyMid: 0x2080a0, skyBot: 0x50c0d0,
       fog:    0x2080a0, clear:  0x2080a0,
       ambient: 0x80d0e0, ambientI: 0.85,
@@ -785,7 +933,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
       cloud:   0xa0e0e0, cloudEm: 0xc0e8e8
     },
     {
-      name: 'Candy', fromLevel: 22,
+      name: 'Candy', sky: 'candy', fromLevel: 22,
       skyTop: 0xff80c8, skyMid: 0xffb0e8, skyBot: 0xfff0fa,
       fog:    0xffb0e8, clear:  0xff80c8,
       ambient: 0xffc8e0, ambientI: 0.85,
@@ -837,6 +985,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
     targetTheme = t;
     targetColors = buildTargetColors(t);
     themeTransition = 2.4;  // seconds to blend
+    crossfadeSkyTo(t);
   }
 
   function applyThemeState() {
@@ -1615,6 +1764,84 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
     return clips.find(c => c.name.toLowerCase().includes(k)) || clips[0];
   }
 
+  // ---------- Shell-texture fur ----------
+  // N copies of each fur-covered skinned mesh, pushed outward along the (skinned) normal.
+  // Each shell discards fragments using 3D cell noise in bind-pose space, so strands stick
+  // to the body while it animates. Lower shells are darker (self-shadowing).
+  const FUR = {
+    Fox:   { mats: ['Main', 'Main_Light'], len: 0.018, freq: 170 },
+    Wolf:  { mats: ['Main', 'Main_Light'], len: 0.022, freq: 150 },
+    Dog:   { mats: ['Main', 'Main_Light'], len: 0.015, freq: 180 },
+    Cat:   { mats: ['AtlasMaterial'],      len: 0.013, freq: 200, lumMask: true },
+    Bunny: { mats: ['Bunny_Main'],         len: 0.017, freq: 190 }
+  };
+  const FUR_SHELLS = 10;
+  function furPatch(shader) {
+    const f = this.userData.fur;
+    shader.uniforms.uShellH = { value: f.h };
+    shader.uniforms.uFurLen = { value: f.len };
+    shader.uniforms.uFurFreq = { value: f.freq };
+    shader.uniforms.uLumMask = { value: f.lumMask ? 1 : 0 };
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        uniform float uShellH, uFurLen, uFurFreq;
+        varying vec3 vFurP;`)
+      .replace('#include <skinning_vertex>', `#include <skinning_vertex>
+        vFurP = position * uFurFreq;
+        transformed += normalize(objectNormal) * uFurLen * uShellH;`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        uniform float uShellH, uLumMask;
+        varying vec3 vFurP;
+        float furHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+        float furNoise(vec3 x) {
+          vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(mix(furHash(i), furHash(i + vec3(1,0,0)), f.x),
+                         mix(furHash(i + vec3(0,1,0)), furHash(i + vec3(1,1,0)), f.x), f.y),
+                     mix(mix(furHash(i + vec3(0,0,1)), furHash(i + vec3(1,0,1)), f.x),
+                         mix(furHash(i + vec3(0,1,1)), furHash(i + vec3(1,1,1)), f.x), f.y), f.z);
+        }`)
+      .replace('#include <map_fragment>', `#include <map_fragment>
+        {
+          // smooth two-octave value noise: organic clumps, no grid lines
+          float n = furNoise(vFurP) * 0.6 + furNoise(vFurP * 2.9 + 7.3) * 0.4;
+          if (n < 0.12 + uShellH * 0.78) discard;
+          if (uLumMask > 0.5 && dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11)) < 0.06) discard;
+          diffuseColor.rgb *= mix(0.6, 1.1, uShellH);
+        }`);
+  }
+  function addFur(model, cfg) {
+    const created = [];
+    const targets = [];
+    model.traverse(o => {
+      if (o.isSkinnedMesh && o.material && cfg.mats.includes(o.material.name)) targets.push(o);
+    });
+    for (const mesh of targets) {
+      mesh.geometry.computeBoundingBox();
+      const size = mesh.geometry.boundingBox.getSize(new THREE.Vector3()).length();
+      for (let i = 1; i <= FUR_SHELLS; i++) {
+        const m = mesh.material.clone();
+        m.userData.fur = {
+          h: i / FUR_SHELLS,
+          len: size * cfg.len,
+          freq: cfg.freq / size,
+          lumMask: !!cfg.lumMask
+        };
+        m.roughness = 0.95;
+        m.onBeforeCompile = furPatch;
+        m.customProgramCacheKey = () => 'furShell1' + (m.map ? 'map' : '');
+        const shell = new THREE.SkinnedMesh(mesh.geometry, m);
+        shell.bind(mesh.skeleton, mesh.bindMatrix);
+        shell.frustumCulled = false;
+        shell.castShadow = false;
+        shell.receiveShadow = true;
+        mesh.add(shell);
+        created.push(m);
+      }
+    }
+    return created;
+  }
+
   function buildModelAnimal(def) {
     const cached = modelCache[def.name];
     const model = SkeletonUtils.clone(cached.scene);
@@ -1631,6 +1858,8 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
       air:   mixer.clipAction(findClip(cached.clips, def.air)),
       death: mixer.clipAction(findClip(cached.clips, 'Death'))
     };
+    const furMats = FUR[def.name] ? addFur(model, FUR[def.name]) : [];
+    g.userData.furMats = furMats;
     actions.run.timeScale = 1.4;
     actions.death.setLoop(THREE.LoopOnce);
     actions.death.clampWhenFinished = true;
@@ -1647,6 +1876,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
       scene.remove(animalGroup);
       // GLTF clones share geometry/materials with the cache — never dispose those
       if (!animalGroup.userData.isGLTF) disposeGroup(animalGroup);
+      else if (animalGroup.userData.furMats) animalGroup.userData.furMats.forEach(m => m.dispose());
     }
     animalIdx = ((idx % ANIMAL_DEFS.length) + ANIMAL_DEFS.length) % ANIMAL_DEFS.length;
     const def = ANIMAL_DEFS[animalIdx];
@@ -2085,6 +2315,115 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
     return 'normal';
   }
 
+  // ---------- Realistic platforms: Blender floating islands + photo-scanned textures ----------
+  // Grass / rock / snow PBR textures (Poly Haven, CC0) applied with triplanar projection in
+  // object space: no UVs needed, no stretching at any platform size, no swimming on movers.
+  function loadTileTex(path, srgb) {
+    const t = texLoader.load(path);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+    t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    return t;
+  }
+  const TEX = {
+    grass: loadTileTex('textures/grass_color.jpg', true),  grassN: loadTileTex('textures/grass_normal.jpg', false),
+    rock:  loadTileTex('textures/rock_color.jpg', true),   rockN:  loadTileTex('textures/rock_normal.jpg', false),
+    snow:  loadTileTex('textures/snow_color.jpg', true),   snowN:  loadTileTex('textures/snow_normal.jpg', false)
+  };
+  const TYPE_LOOK = {
+    normal:       { top: 'grass', tint: [0.94, 1.1, 0.82] },
+    bouncy:       { top: 'grass', tint: [0.72, 1.3, 0.62] },   // vivid spring-green moss
+    boost:        { top: 'grass', tint: [1.45, 0.82, 0.42] },  // autumn-orange
+    disappearing: { top: 'rock',  tint: [0.95, 0.62, 1.35] },  // purple crystal rock
+    ice:          { top: 'snow',  tint: [0.95, 1.02, 1.1] }
+  };
+  function islandPatch(shader) {
+    const tp = this.userData.tp;
+    shader.uniforms.tTop   = { value: TEX[tp.top] };
+    shader.uniforms.tTopN  = { value: TEX[tp.top + 'N'] };
+    shader.uniforms.tSide  = { value: TEX.rock };
+    shader.uniforms.tSideN = { value: TEX.rockN };
+    shader.uniforms.uTint  = { value: tp.tint };
+    shader.uniforms.uOffset = { value: tp.offset };
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        attribute vec3 color;
+        uniform vec3 uOffset;
+        varying vec3 vTpPos; varying vec3 vTpNrm; varying vec3 vTpCol;`)
+      .replace('#include <project_vertex>', `#include <project_vertex>
+        vTpPos = transformed + uOffset;
+        vTpNrm = normalize(objectNormal);
+        vTpCol = color;`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        uniform sampler2D tTop, tTopN, tSide, tSideN;
+        uniform vec3 uTint;
+        varying vec3 vTpPos; varying vec3 vTpNrm; varying vec3 vTpCol;`)
+      .replace('#include <map_fragment>', `
+        vec3 tpN = normalize(vTpNrm);
+        vec3 tpW = pow(abs(tpN), vec3(4.0)); tpW /= (tpW.x + tpW.y + tpW.z);
+        vec3 pr = vTpPos * 0.38;   // rock: one texture tile per ~2.6 units
+        vec3 pg = vTpPos * 0.62;   // grass/snow: one tile per ~1.6 units
+        vec3 rockC = texture2D(tSide, pr.zy).rgb * tpW.x + texture2D(tSide, pr.xz).rgb * tpW.y + texture2D(tSide, pr.xy).rgb * tpW.z;
+        vec3 topC  = texture2D(tTop,  pg.zy).rgb * tpW.x + texture2D(tTop,  pg.xz).rgb * tpW.y + texture2D(tTop,  pg.xy).rgb * tpW.z;
+        float tpTop = clamp(max(smoothstep(0.55, 0.85, tpN.y), vTpCol.g), 0.0, 1.0);
+        vec3 tpCol = mix(rockC, topC * uTint, tpTop);
+        diffuseColor.rgb *= tpCol * mix(1.0, vTpCol.r, 0.8);`)
+      .replace('#include <normal_fragment_maps>', `
+        vec3 tnX = mix(texture2D(tSideN, pr.zy).xyz, texture2D(tTopN, pg.zy).xyz, tpTop) * 2.0 - 1.0;
+        vec3 tnY = mix(texture2D(tSideN, pr.xz).xyz, texture2D(tTopN, pg.xz).xyz, tpTop) * 2.0 - 1.0;
+        vec3 tnZ = mix(texture2D(tSideN, pr.xy).xyz, texture2D(tTopN, pg.xy).xyz, tpTop) * 2.0 - 1.0;
+        tnX = vec3(tnX.xy + tpN.zy, abs(tnX.z) * tpN.x);
+        tnY = vec3(tnY.xy + tpN.xz, abs(tnY.z) * tpN.y);
+        tnZ = vec3(tnZ.xy + tpN.xy, abs(tnZ.z) * tpN.z);
+        vec3 tpWN = normalize(tnX.zyx * tpW.x + tnY.xzy * tpW.y + tnZ.xyz * tpW.z);
+        normal = normalize((viewMatrix * vec4(tpWN, 0.0)).xyz);`);
+  }
+  function makeIslandMaterial(type) {
+    const look = TYPE_LOOK[type] || TYPE_LOOK.normal;
+    const m = new THREE.MeshStandardMaterial({
+      color: 0xffffff, roughness: type === 'ice' ? 0.35 : 0.95, metalness: 0.0
+    });
+    // subtle natural variation between islands
+    const v = type === 'normal' ? 0.9 + Math.random() * 0.2 : 1.0;
+    m.userData.tp = {
+      top: look.top,
+      tint: new THREE.Vector3(look.tint[0] * v, look.tint[1] * (0.95 + Math.random() * 0.1), look.tint[2] * v),
+      offset: new THREE.Vector3(Math.random() * 50, Math.random() * 50, Math.random() * 50)
+    };
+    m.onBeforeCompile = islandPatch;
+    m.customProgramCacheKey = () => 'islandTriplanar1';
+    return m;
+  }
+  // Blender island shapes (unit footprint, flat top at y=0, rock hanging below)
+  let islandGeos = null;
+  function makePlatformGeometry(w, h, d) {
+    if (islandGeos) {
+      const g = islandGeos[Math.floor(Math.random() * islandGeos.length)].clone();
+      const depth = THREE.MathUtils.clamp(0.42 * Math.min(w, d) + 0.4, 0.75, 2.4);
+      g.scale(w, depth, d);
+      g.translate(0, h / 2, 0);
+      return g;
+    }
+    const g = new THREE.BoxGeometry(w, h, d);
+    const n = g.attributes.position.count;
+    const col = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) col[i * 3] = 1;     // AO = 1, no grass lip
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    return g;
+  }
+  new GLTFLoader().load('models/islands.glb', (gltf) => {
+    const list = [];
+    gltf.scene.traverse(o => { if (o.isMesh) list.push(o.geometry); });
+    if (!list.length) return;
+    islandGeos = list;
+    // upgrade platforms that were built with the box fallback
+    for (const p of platforms) {
+      p.mesh.geometry.dispose();
+      p.mesh.geometry = makePlatformGeometry(p.w, p.h, p.d);
+    }
+  }, undefined, () => {});
+
   function addPlatform(x, y, z, w, h, d, colorHex, type = 'normal') {
     // Override visuals based on type
     let visualColor = colorHex;
@@ -2106,15 +2445,9 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
       matOpts.roughness = 0.15;
       matOpts.emissiveIntensity = 0.2;
     }
-    const geo = new THREE.BoxGeometry(w, h, d);
-    // Physical material with clearcoat — platforms read as glossy painted surfaces
-    const mat = new THREE.MeshPhysicalMaterial({
-      color: visualColor, emissive: visualColor,
-      emissiveIntensity: matOpts.emissiveIntensity * 0.7,
-      roughness: matOpts.roughness, metalness: matOpts.metalness,
-      clearcoat: 0.55, clearcoatRoughness: 0.3,
-      transparent: matOpts.transparent, opacity: matOpts.opacity
-    });
+    const geo = makePlatformGeometry(w, h, d);
+    const mat = makeIslandMaterial(type);
+    if (matOpts.transparent) { mat.transparent = true; mat.opacity = matOpts.opacity; }
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(x, y, z);
     mesh.castShadow = true; mesh.receiveShadow = true;
@@ -2182,8 +2515,8 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
       freq: 0.6 + Math.random() * 0.7,
       phase: Math.random() * Math.PI * 2
     };
-    p.mesh.material.emissive = new THREE.Color(0x666666);
-    p.mesh.material.emissiveIntensity = 0.5;
+    p.mesh.material.emissive = new THREE.Color(0x3a6aa8);
+    p.mesh.material.emissiveIntensity = 0.35;
   }
 
   let furthestX = 0;
@@ -2654,6 +2987,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
     themeState.cloudEm.copy(targetColors.cloudEm);
     themeTransition = 0;
     applyThemeState();
+    if (skyTextures[startTheme.sky]) showSkyInstant(startTheme);
     jumpPressed = false; jumpHeld = false;
     for (const t of POWERUP_TYPES) {
       player.powerups[t].active = false;
@@ -3161,8 +3495,9 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
       shakeAmt *= 0.90;
     } else shakeAmt = 0;
 
-    sun.position.set(player.pos.x + 15, 40, player.pos.z + 15);
-    sun.target.position.set(player.pos.x, 0, player.pos.z);
+    sun.position.set(player.pos.x + sunDir.x * 45, player.pos.y + sunDir.y * 45, player.pos.z + sunDir.z * 45);
+    sky.position.copy(camera.position);
+    sun.target.position.set(player.pos.x, player.pos.y, player.pos.z);
     sun.target.updateMatrixWorld();
   }
 
@@ -3174,6 +3509,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
     animateClouds(dt);
     animateBirds(dt, t);
     updateTheme(dt);
+    updateSkyFade(dt);
     // Skeletal animation always ticks — idle on the title screen, run in game, even during death
     if (animalRig && animalRig.mixer && !paused) animalRig.mixer.update(dt);
     update(dt, t);
@@ -3195,6 +3531,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
   // Debug handle for console inspection
   window.__CH = {
     scene, camera, player, modelCache, ANIMAL_DEFS, coins,
+    setTheme: (i) => setTargetTheme(THEMES[i]),
     get animalGroup() { return animalGroup; },
     get animalRig() { return animalRig; }
   };
