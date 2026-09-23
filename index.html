@@ -139,6 +139,63 @@
     background: linear-gradient(#6cf, #36c); color: #fff;
     border: 0; border-radius: 8px; cursor: pointer; font-weight: 700;
   }
+
+  /* ---------- Combo chip ---------- */
+  #comboChip {
+    display: inline-block; margin-left: 6px; padding: 1px 9px;
+    background: linear-gradient(#ff9a3c, #ff5722); border-radius: 10px;
+    font-weight: 800; text-shadow: 0 0 4px #802;
+    animation: comboPulse 0.5s ease infinite alternate;
+  }
+  #comboChip.hidden { display: none; }
+  @keyframes comboPulse { from { transform: scale(1); } to { transform: scale(1.12); } }
+
+  /* ---------- Top-right controls ---------- */
+  #topControls {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 10px);
+    right: calc(env(safe-area-inset-right, 0px) + 12px);
+    display: flex; gap: 8px; z-index: 25;
+  }
+  #topControls button {
+    width: 44px; height: 44px; font-size: 22px;
+    background: rgba(0,0,0,0.4); color: #fff;
+    border: 1px solid rgba(255,255,255,0.35); border-radius: 10px;
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+    backdrop-filter: blur(3px);
+  }
+  #topControls button:active { transform: scale(0.93); }
+
+  /* ---------- Achievement toasts ---------- */
+  #toasts {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 12px);
+    left: 50%; transform: translateX(-50%);
+    display: flex; flex-direction: column; gap: 8px;
+    z-index: 45; pointer-events: none;
+  }
+  .toast {
+    background: linear-gradient(#2a3a5c, #17233f);
+    border: 2px solid rgba(255,214,80,0.7);
+    border-radius: 12px; padding: 10px 18px;
+    color: #fff; font-size: 16px; text-align: center;
+    box-shadow: 0 0 24px rgba(255,200,60,0.4);
+    animation: toastIn 0.35s cubic-bezier(.34,1.56,.64,1);
+  }
+  .toast .t-title { font-weight: 800; color: #ffd94d; }
+  .toast.leaving { opacity: 0; transition: opacity 0.4s; }
+  @keyframes toastIn { from { transform: translateY(-24px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+  /* ---------- Pause overlay ---------- */
+  #pausedOverlay {
+    position: fixed; inset: 0; z-index: 35;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: rgba(4,10,26,0.55); backdrop-filter: blur(4px);
+    color: #fff; text-align: center;
+  }
+  #pausedOverlay.hidden { display: none; }
+  #pausedOverlay div { font-size: 54px; font-weight: 800; letter-spacing: 4px; text-shadow: 0 0 24px #6cf; }
+  #pausedOverlay p { font-size: 17px; opacity: 0.85; }
   #levelFlash {
     position: fixed; top: 28%; left: 50%; transform: translate(-50%, -50%) scale(0.7);
     font-size: 60px; font-weight: 800; letter-spacing: 3px;
@@ -230,8 +287,17 @@
 </style>
 </head>
 <body>
-<div id="hud">Level: <span id="level">1</span> &nbsp;·&nbsp; Score: <span id="score">0</span> &nbsp;·&nbsp; <span style="color:#ffd633;">⊙</span> <span id="coins">0</span> &nbsp;·&nbsp; Best: <span id="best">0</span></div>
+<div id="hud">Level: <span id="level">1</span> &nbsp;·&nbsp; Score: <span id="score">0</span> &nbsp;·&nbsp; <span style="color:#ffd633;">⊙</span> <span id="coins">0</span> &nbsp;·&nbsp; Best: <span id="best">0</span> <span id="comboChip" class="hidden">🔥 ×2</span></div>
 <div id="activePowers"></div>
+<div id="topControls">
+  <button id="musicBtn" type="button" title="Music on/off">🔊</button>
+  <button id="pauseBtn" type="button" title="Pause (P)">⏸</button>
+</div>
+<div id="toasts"></div>
+<div id="pausedOverlay" class="hidden">
+  <div>⏸ PAUSED</div>
+  <p>Press P or tap ▶ to resume</p>
+</div>
 <div id="levelFlash"></div>
 
 <div id="lbPanel" class="hidden">
@@ -371,6 +437,145 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
     },
     hitSpike: () => { tone(180, 0.2, { type: 'sawtooth', slideTo: 50, vol: 0.18 }); noise(0.15, 0.18, 800); }
   };
+
+  // ---------- Background music (procedural chill loop) ----------
+  // Soft triangle-pad chords (Cmaj7 → Am7 → Fmaj7 → G) with a sparse sine arpeggio
+  // through a feedback delay. No audio files — everything is synthesized.
+  let musicOn = storage.get('cloudHopperMusic') !== '0';
+  let musicNodes = null;
+  function startMusic() {
+    if (!audioCtx || musicNodes || !musicOn) return;
+    unlockAudio();
+    const master = audioCtx.createGain();
+    master.gain.value = 0.15;
+    master.connect(audioCtx.destination);
+    const lp = audioCtx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 1300;
+    lp.connect(master);
+    const delay = audioCtx.createDelay(1.0);
+    delay.delayTime.value = 0.38;
+    const fb = audioCtx.createGain();
+    fb.gain.value = 0.32;
+    delay.connect(fb); fb.connect(delay); delay.connect(master);
+    const CHORDS = [
+      [261.63, 329.63, 392.00, 493.88],   // Cmaj7
+      [220.00, 261.63, 329.63, 392.00],   // Am7
+      [174.61, 220.00, 261.63, 329.63],   // Fmaj7
+      [196.00, 246.94, 293.66, 392.00]    // G
+    ];
+    let ci = 0;
+    musicNodes = { master, timer: null };
+    function bar() {
+      if (!musicNodes) return;
+      const notes = CHORDS[ci % CHORDS.length];
+      ci++;
+      const now = audioCtx.currentTime;
+      // pad
+      for (const f of notes) {
+        const o = audioCtx.createOscillator();
+        o.type = 'triangle';
+        o.frequency.value = f / 2;
+        o.detune.value = (Math.random() - 0.5) * 8;
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(0.0001, now);
+        g.gain.linearRampToValueAtTime(0.045, now + 1.3);
+        g.gain.linearRampToValueAtTime(0.0001, now + 4.4);
+        o.connect(g).connect(lp);
+        o.start(now); o.stop(now + 4.6);
+      }
+      // sparse arpeggio plucks
+      for (let i = 0; i < 8; i++) {
+        if (Math.random() < 0.35) continue;
+        const t0 = now + i * 0.5 + 0.02;
+        const f = notes[Math.floor(Math.random() * notes.length)] * (Math.random() < 0.3 ? 2 : 1);
+        const o = audioCtx.createOscillator();
+        o.type = 'sine'; o.frequency.value = f;
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.linearRampToValueAtTime(0.05, t0 + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.45);
+        o.connect(g); g.connect(lp); g.connect(delay);
+        o.start(t0); o.stop(t0 + 0.5);
+      }
+      musicNodes.timer = setTimeout(bar, 4000);
+    }
+    bar();
+  }
+  function stopMusic() {
+    if (!musicNodes) return;
+    clearTimeout(musicNodes.timer);
+    try { musicNodes.master.disconnect(); } catch {}
+    musicNodes = null;
+  }
+  const musicBtn = document.getElementById('musicBtn');
+  function refreshMusicBtn() { musicBtn.textContent = musicOn ? '🔊' : '🔇'; }
+  refreshMusicBtn();
+  musicBtn.addEventListener('click', () => {
+    musicOn = !musicOn;
+    storage.set('cloudHopperMusic', musicOn ? '1' : '0');
+    refreshMusicBtn();
+    if (musicOn) startMusic(); else stopMusic();
+  });
+
+  // ---------- Achievements ----------
+  const ACHIEVEMENTS = [
+    { id: 'ring1',    icon: '⊙',  name: 'First Ring',       desc: 'Collect your first golden ring' },
+    { id: 'rings25',  icon: '💰', name: 'Ring Hoarder',     desc: '25 rings in a single run' },
+    { id: 'combo5',   icon: '🔥', name: 'Combo ×5',         desc: 'Chain 5 rings without dropping the combo' },
+    { id: 'lvl3',     icon: '🥉', name: 'Getting Warm',     desc: 'Reach Level 3' },
+    { id: 'lvl5',     icon: '🥈', name: 'Sky Runner',       desc: 'Reach Level 5' },
+    { id: 'lvl8',     icon: '🥇', name: 'Cloud Legend',     desc: 'Reach Level 8' },
+    { id: 'score500', icon: '⭐', name: 'Score 500',        desc: 'Score 500 in one run' },
+    { id: 'power1',   icon: '⚡', name: 'Powered Up',       desc: 'Grab your first power-up' },
+    { id: 'flip10',   icon: '🤸', name: 'Acrobat',          desc: '10 somersaults in one run' },
+    { id: 'deaths10', icon: '🕊️', name: 'Frequent Flyer',   desc: 'Visit animal heaven 10 times' }
+  ];
+  let unlockedAchievements;
+  try { unlockedAchievements = new Set(JSON.parse(storage.get('cloudHopperAch') || '[]')); }
+  catch { unlockedAchievements = new Set(); }
+  const runStats = { rings: 0, maxCombo: 0, flips: 0, powerups: 0 };
+  let totalDeaths = +storage.get('cloudHopperDeaths') || 0;
+  const toastsEl = document.getElementById('toasts');
+
+  function showToast(title, sub) {
+    const el = document.createElement('div');
+    el.className = 'toast';
+    const t = document.createElement('div');
+    t.className = 't-title';
+    t.textContent = title;
+    const s = document.createElement('div');
+    s.textContent = sub;
+    el.append(t, s);
+    toastsEl.appendChild(el);
+    setTimeout(() => { el.classList.add('leaving'); setTimeout(() => el.remove(), 450); }, 2600);
+  }
+
+  function unlockAchievement(a) {
+    if (unlockedAchievements.has(a.id)) return;
+    unlockedAchievements.add(a.id);
+    storage.set('cloudHopperAch', JSON.stringify([...unlockedAchievements]));
+    showToast(`${a.icon} ${a.name}`, a.desc);
+    sfx.levelup();
+  }
+
+  function checkAchievements(snapshot) {
+    for (const a of ACHIEVEMENTS) {
+      if (unlockedAchievements.has(a.id)) continue;
+      const s = snapshot;
+      const hit =
+        (a.id === 'ring1'    && s.rings >= 1) ||
+        (a.id === 'rings25'  && s.rings >= 25) ||
+        (a.id === 'combo5'   && s.maxCombo >= 5) ||
+        (a.id === 'lvl3'     && s.level >= 3) ||
+        (a.id === 'lvl5'     && s.level >= 5) ||
+        (a.id === 'lvl8'     && s.level >= 8) ||
+        (a.id === 'score500' && s.score >= 500) ||
+        (a.id === 'power1'   && s.powerups >= 1) ||
+        (a.id === 'flip10'   && s.flips >= 10) ||
+        (a.id === 'deaths10' && s.totalDeaths >= 10);
+      if (hit) unlockAchievement(a);
+    }
+  }
 
   // ---------- Three.js setup ----------
   const scene = new THREE.Scene();
@@ -771,6 +976,37 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
   halo.rotation.x = Math.PI / 2;
   halo.visible = false;
   scene.add(halo);
+
+  // ---------- Landing shadow blob ----------
+  // A soft dark disc projected straight down onto the platform under the player,
+  // so you can always tell exactly where you'll land.
+  const dropShadow = new THREE.Mesh(
+    new THREE.CircleGeometry(0.5, 24),
+    new THREE.MeshBasicMaterial({ color: 0x102030, transparent: true, opacity: 0.35, depthWrite: false })
+  );
+  dropShadow.rotation.x = -Math.PI / 2;
+  dropShadow.renderOrder = 2;
+  dropShadow.visible = false;
+  scene.add(dropShadow);
+
+  function updateDropShadow() {
+    if (player.dead || !started) { dropShadow.visible = false; return; }
+    const px = player.pos.x, py = player.pos.y, pz = player.pos.z;
+    let topY = -Infinity;
+    for (const p of platforms) {
+      if (px + player.hx <= p.x - p.hw || px - player.hx >= p.x + p.hw) continue;
+      if (pz + player.hz <= p.z - p.hd || pz - player.hz >= p.z + p.hd) continue;
+      const t = p.y + p.hh;
+      if (t <= py + 0.05 && t > topY) topY = t;
+    }
+    if (topY === -Infinity) { dropShadow.visible = false; return; }
+    const h = Math.max(0, py - topY);
+    dropShadow.visible = true;
+    dropShadow.position.set(px, topY + 0.02, pz);
+    const s = Math.max(0.5, 1.15 - h * 0.05);
+    dropShadow.scale.setScalar(s);
+    dropShadow.material.opacity = Math.max(0.14, 0.4 - h * 0.02);
+  }
 
   // ---------- Heaven scene: pearly gates + Jesus, hidden until death ----------
   function buildHeavenScene() {
@@ -1390,11 +1626,14 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
     model.scale.setScalar(def.scale);
     const mixer = new THREE.AnimationMixer(model);
     const actions = {
-      idle: mixer.clipAction(findClip(cached.clips, def.idle)),
-      run:  mixer.clipAction(findClip(cached.clips, def.run)),
-      air:  mixer.clipAction(findClip(cached.clips, def.air))
+      idle:  mixer.clipAction(findClip(cached.clips, def.idle)),
+      run:   mixer.clipAction(findClip(cached.clips, def.run)),
+      air:   mixer.clipAction(findClip(cached.clips, def.air)),
+      death: mixer.clipAction(findClip(cached.clips, 'Death'))
     };
     actions.run.timeScale = 1.4;
+    actions.death.setLoop(THREE.LoopOnce);
+    actions.death.clampWhenFinished = true;
     actions.idle.play();
     return {
       group: g, legs: [], ears: [], tailGrp: null,
@@ -1800,6 +2039,8 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
     const pu = player.powerups[type];
     pu.active = true;
     if (info.duration > 0) pu.until = clock.elapsedTime + info.duration;
+    runStats.powerups += 1;
+    checkAchievements({ ...runStats, level: currentLevel, score, totalDeaths });
     // celebratory chime + burst in the power-up's color
     tone(660, 0.08, { vol: 0.10 });
     setTimeout(() => tone(990, 0.12, { vol: 0.10 }), 60);
@@ -2106,6 +2347,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
     if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
     if (e.repeat) return;
     keys[e.code] = true;
+    if (e.code === 'KeyP') setPaused(!paused);
     if (e.code === 'Space') { jumpPressed = true; jumpHeld = true; }
     if ((e.code === 'Enter' || e.code === 'Space') && !overlay.classList.contains('hidden')
         && lbPanel.classList.contains('hidden')) {
@@ -2311,6 +2553,44 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 
   // ---------- Game flow ----------
   let started = false, score = 0, coinsCollected = 0, deathTimer = 0;
+  // Ring combo chain
+  const COMBO_WINDOW = 4.0;
+  let combo = 0, comboTimer = 0;
+  const comboChipEl = document.getElementById('comboChip');
+  function refreshComboChip() {
+    if (combo >= 2) {
+      comboChipEl.textContent = `🔥 ×${combo}`;
+      comboChipEl.classList.remove('hidden');
+    } else {
+      comboChipEl.classList.add('hidden');
+    }
+  }
+  // Pause
+  let paused = false;
+  const pausedOverlayEl = document.getElementById('pausedOverlay');
+  const pauseBtn = document.getElementById('pauseBtn');
+  let pausedAt = 0;
+  function setPaused(on) {
+    if (on === paused) return;
+    if (on && (!started || player.dead)) return; // only pausable mid-run
+    paused = on;
+    pausedOverlayEl.classList.toggle('hidden', !paused);
+    pauseBtn.textContent = paused ? '▶' : '⏸';
+    if (paused) {
+      pausedAt = clock.elapsedTime;
+    } else {
+      // shift active power-up expiries by however long we sat paused
+      const delta = clock.elapsedTime - pausedAt;
+      for (const type of POWERUP_TYPES) {
+        const pu = player.powerups[type];
+        if (pu.active && pu.until > 0) pu.until += delta;
+      }
+    }
+  }
+  pauseBtn.addEventListener('click', () => { unlockAudio(); setPaused(!paused); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && started && !player.dead) setPaused(true);
+  });
   let currentLevel = 1;
   let flashTimer = 0;
   let shakeAmt = 0;
@@ -2382,6 +2662,13 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
     if (activePowersEl) activePowersEl.innerHTML = '';
     player.flipT = 0;
     player.trailTimer = 0;
+    combo = 0; comboTimer = 0; refreshComboChip();
+    runStats.rings = 0; runStats.maxCombo = 0; runStats.flips = 0; runStats.powerups = 0;
+    paused = false;
+    pausedOverlayEl.classList.add('hidden');
+    pauseBtn.textContent = '⏸';
+    // Back from the dead: crossfade the model out of its death pose
+    setAnimState('idle');
   }
   function startGame() {
     reset();
@@ -2389,6 +2676,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
     overlay.classList.add('hidden');
     submitBox.classList.add('hidden');
     lbPanel.classList.add('hidden');
+    startMusic();
   }
   function endGame() {
     if (player.dead) return;
@@ -2403,6 +2691,11 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
       z: player.pos.z
     };
     sfx.death();
+    // Play the model's real death animation during the burn phase
+    setAnimState('death');
+    totalDeaths += 1;
+    storage.set('cloudHopperDeaths', totalDeaths);
+    checkAchievements({ ...runStats, level: currentLevel, score, totalDeaths });
     if (score > best) {
       best = score;
       storage.set('spaceJumper3DBest', best);
@@ -2444,6 +2737,11 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
   function update(dt, t) {
     if (player.dead) {
       deathTimer += dt;
+      // Tap jump to skip the heaven sequence straight to the menu
+      if (deathTimer > 0.8 && deathTimer < 5.6 && jumpPressed) {
+        jumpPressed = false;
+        deathTimer = 5.61;
+      }
       const dp = player.deathPos;
 
       if (deathTimer < 1.2) {
@@ -2555,6 +2853,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
       return;
     }
     if (!started) return;
+    if (paused) return;
 
     // ---- Power-up effects timing ----
     const now = clock.elapsedTime;
@@ -2607,6 +2906,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
         sfx.djump();
         burst(player.pos.x, player.pos.y + 0.4, player.pos.z, 0x88ccff, 10, { speed: 3, gravity: 2 });
         // Trigger a full somersault — alternate backflip / barrel spin for variety
+        runStats.flips += 1;
         player.flipDur = 0.55;
         player.flipT   = player.flipDur;
         player.flipKind = (player.jumpsLeft === 0)
@@ -2717,7 +3017,13 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
       ears[1].rotation.x = -0.18 + Math.sin(t * 2.0 + 1.3) * 0.05;
     }
 
-    // coin collection
+    // combo decay
+    if (comboTimer > 0) {
+      comboTimer -= wDt;
+      if (comboTimer <= 0) { combo = 0; refreshComboChip(); }
+    }
+
+    // coin collection (rings chain into a combo for multiplied score)
     const px = player.pos.x, pyc = player.pos.y + player.hy, pz = player.pos.z;
     for (const c of coins) {
       if (c.collected) continue;
@@ -2725,12 +3031,20 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
       if (dx*dx + dy*dy + dz*dz < 0.9) {
         c.collected = true;
         c.mesh.visible = false;
-        score += 5;
+        combo = comboTimer > 0 ? Math.min(combo + 1, 9) : 1;
+        comboTimer = COMBO_WINDOW;
+        refreshComboChip();
+        score += 5 * combo;
         coinsCollected += 1;
+        runStats.rings = coinsCollected;
+        runStats.maxCombo = Math.max(runStats.maxCombo, combo);
         scoreEl.textContent = score;
         coinsEl.textContent = coinsCollected;
-        sfx.coin();
+        // pitch rises with the combo for that arcade chain feel
+        tone(988 + combo * 80, 0.06, { vol: 0.10 });
+        setTimeout(() => tone(1319 + combo * 80, 0.12, { vol: 0.10 }), 55);
         burst(c.x, c.y, c.z, 0xffd633, 14, { speed: 3, gravity: 4, upward: true });
+        checkAchievements({ ...runStats, level: currentLevel, score, totalDeaths });
       }
     }
     const magnetOn = player.powerups.magnet.active;
@@ -2805,6 +3119,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
       sfx.levelup();
       confetti(player.pos.x, player.pos.y + 0.8, player.pos.z);
       if (themeChanged) setTargetTheme(newTheme);
+      checkAchievements({ ...runStats, level: lvl, score, totalDeaths });
     }
 
     spawnAhead();
@@ -2860,8 +3175,9 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
     animateBirds(dt, t);
     updateTheme(dt);
     // Skeletal animation always ticks — idle on the title screen, run in game, even during death
-    if (animalRig && animalRig.mixer) animalRig.mixer.update(dt);
+    if (animalRig && animalRig.mixer && !paused) animalRig.mixer.update(dt);
     update(dt, t);
+    updateDropShadow();
     updateParticles(dt);
     updateCamera(dt);
     if (flashTimer > 0) {
@@ -2878,7 +3194,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
   applyThemeState();
   // Debug handle for console inspection
   window.__CH = {
-    scene, camera, player, modelCache, ANIMAL_DEFS,
+    scene, camera, player, modelCache, ANIMAL_DEFS, coins,
     get animalGroup() { return animalGroup; },
     get animalRig() { return animalRig; }
   };
