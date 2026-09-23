@@ -42,19 +42,30 @@ BL=~/Applications/Blender.app/Contents/MacOS/Blender
 $BL -b -P blender/render_skies.py -- /tmp/skies          # 5 panoramas + skies.json (copy into textures/)
 $BL -b -P blender/make_world_assets.py -- models         # clouds.glb, islands.glb
 $BL -b -P blender/smooth_animals.py -- models/src models # subdivided, smoothed animals
+$BL -b -P blender/make_gates.py -- models                # gates.glb (hinged doors + frame)
+$BL -b -P blender/make_jesus.py -- <human_base_meshes_bundle.blend> out.png   # Jesus sprite
 ```
+
+`make_jesus.py` needs Blender Studio's free
+[Human Base Meshes bundle](https://www.blender.org/download/demo-files/) (CC0, ~50 MB, not stored
+in this repo). Crop the render and save it as `textures/jesus.webp` (+ `jesus.png` fallback).
 
 - **Skies** — Nishita physical atmosphere rendered in Cycles as 360° panoramas, with a displaced
   cloud sea and cumulus towers that fade into the true horizon color (two-pass haze).
 - **Clouds** — metaball cumulus with sunlight + sky light baked into vertex colors.
 - **Islands** — floating rock islands (flat top matching the collision box) with baked ambient
   occlusion; textured in-game with triplanar-projected photo-scanned grass / rock / snow.
+- **Heaven** — ornate gold-and-pearl gates modeled in Blender (the doors swing on real hinges in
+  game), plus a Cycles-rendered figure of Jesus: realistic human base mesh, cloth-simulated robe,
+  sleeves and red mantle, ~15,000 procedurally groomed hair and beard strands, gold cord and halo.
 - **Animals** — subdivision under the armature (skinning + animations preserved), smooth shading,
   matte fur materials; the game adds shell-texture fur at runtime.
 
 ## Credits
 
 Grass, rock and snow textures from [Poly Haven](https://polyhaven.com) — CC0.
+
+The figure of Jesus is built on Blender Studio's Human Base Meshes — CC0.
 
 Animal models (`models/*.glb`) by [Quaternius](https://quaternius.com) via [Poly Pizza](https://poly.pizza) — CC0 / Public Domain. Rigged and animated low-poly models.
 
