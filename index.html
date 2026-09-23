@@ -346,6 +346,7 @@
   .touchhint { display: none; }
   @media (pointer: coarse) { .touchhint { display: block; } .kbd { display: none; } }
   @media (display-mode: standalone) { .a2hs-tip { display: none; } }
+  .embedded #lbBtn, .embedded #lbPanel, .embedded #submitBox, .embedded .a2hs-tip { display: none !important; }
 
   /* ---------- Phones ---------- */
   @media (max-width: 600px), (max-height: 500px) {
@@ -477,8 +478,8 @@
 <script type="importmap">
 {
   "imports": {
-    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
   }
 }
 </script>
@@ -500,6 +501,14 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
   const startBtn = document.getElementById('startBtn');
   // iOS home-screen apps don't always match (display-mode: standalone)
   if (navigator.standalone) document.querySelector('.a2hs-tip')?.remove();
+
+  // Embedded in Ryder's Playground (an iframe with ?embed=playground): no public leaderboard or
+  // install tip, and game events are posted to the host so it can narrate and award badges.
+  const EMBED = new URLSearchParams(location.search).get('embed') === 'playground' && window.parent !== window;
+  if (EMBED) document.documentElement.classList.add('embedded');
+  function tellHost(type, data = {}) {
+    if (EMBED) window.parent.postMessage({ source: 'cloud-hopper', type, ...data }, location.origin);
+  }
 
   const storage = {
     get(k) { try { return localStorage.getItem(k); } catch { return null; } },
@@ -548,6 +557,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
     // stream in the rest (other animals, heaven, other worlds) while the player is on the menu
     const later = boot.later; boot.later = [];
     later.forEach(fn => { try { fn(); } catch (e) { console.warn(e); } });
+    tellHost('ready');
   }
   setTimeout(finishBoot, 20000);   // never trap the player on the loading screen
 
@@ -2276,6 +2286,7 @@ let cloudShapes = null;
       setAnimal(idx);
       storage.set('spaceJumper3DAnimal', idx);
       sfx.coin();
+      tellHost('animal', { name: ANIMAL_DEFS[idx].name });
     });
   });
 
@@ -2616,6 +2627,7 @@ let cloudShapes = null;
   }
 
   function activatePowerup(type) {
+    tellHost('powerup', { power: type });
     const info = POWERUP_INFO[type];
     const pu = player.powerups[type];
     pu.active = true;
@@ -3259,6 +3271,8 @@ let cloudShapes = null;
           } else if (p.type === 'disappearing' && !p.disappearTimer) {
             p.disappearTimer = 0.001;
           }
+          // (this branch also runs every frame while standing, so only report real landings)
+          if (landingVy < -2 && (p.type === 'bouncy' || p.type === 'ice')) tellHost(p.type);
         }
       }
     }
@@ -3401,6 +3415,7 @@ let cloudShapes = null;
     submitBox.classList.add('hidden');
     lbPanel.classList.add('hidden');
     startMusic();
+    tellHost('start', { name: ANIMAL_DEFS[animalIdx].name });
   }
   function endGame() {
     if (player.dead) return;
@@ -3440,6 +3455,7 @@ let cloudShapes = null;
     burst(player.pos.x, player.pos.y + 0.6, player.pos.z, 0xff3333, 18, { speed: 5, gravity: 12 });
   }
   function showGameOverOverlay() {
+    tellHost('gameover', { score, rings: coinsCollected, level: currentLevel });
     titleEl.textContent = '🕊️ ANIMAL HEAVEN';
     subtitleEl.innerHTML =
       `Final score: ${score}   ·   Best: ${best}<br>` +
@@ -3843,6 +3859,7 @@ let cloudShapes = null;
       } else if (player.luckyTail && rescueFromFall(0xff9a3c)) {
         player.luckyTail = false;
         showToast('🦊 Lucky Tail!', 'Saved from the fall. Only once per run!');
+        tellHost('saved');
         updatePowerupHud();
       } else {
         lavaDeath();
@@ -3862,6 +3879,7 @@ let cloudShapes = null;
       const newTheme = themeForLevel(lvl);
       const themeChanged = newTheme !== targetTheme;
       flashLevel(passed, lvl, themeChanged ? newTheme.name : null);
+      tellHost('level', { level: lvl, newWorld: themeChanged });
       sfx.levelup();
       confetti(player.pos.x, player.pos.y + 0.8, player.pos.z);
       if (themeChanged) setTargetTheme(newTheme);
