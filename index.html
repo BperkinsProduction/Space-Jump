@@ -91,6 +91,9 @@
   }
   .animal-btn .emoji { font-size: 32px; line-height: 1; }
   .animal-btn .name  { font-size: 13px; opacity: 0.9; }
+  .animal-btn .perk  { font-size: 10.5px; font-weight: 500; opacity: 0.7; white-space: nowrap; }
+  #overlay #perkDesc { font-size: 15px; min-height: 1.5em; margin: 2px 0 6px; color: #ffe3b8; }
+  #perkDesc strong { color: #ffd07a; }
   #overlay .animal-btn:active { transform: scale(0.95); }
   #overlay .animal-btn.selected {
     background: linear-gradient(rgba(255,200,120,0.6), rgba(255,120,80,0.5));
@@ -279,6 +282,7 @@
   #activePowers .chip.glider     { box-shadow: 0 0 12px rgba(220, 230, 255, 0.7); }
   #activePowers .chip.shield     { box-shadow: 0 0 12px rgba(255, 200, 60, 0.7); }
   #activePowers .chip.triplejump { box-shadow: 0 0 12px rgba(80, 255, 130, 0.6); }
+  #activePowers .chip.lucky      { box-shadow: 0 0 12px rgba(255, 150, 60, 0.6); }
 
   /* ---------- Touch controls ---------- */
   #touch {
@@ -451,6 +455,7 @@
     <button class="animal-btn" data-animal="4" type="button"><span class="emoji">🐼</span><span class="name">Panda</span></button>
     <button class="animal-btn" data-animal="5" type="button"><span class="emoji">🐶</span><span class="name">Dog</span></button>
   </div>
+  <p id="perkDesc"></p>
   <p class="kbd">Keys: W/↑ forward · A D strafe · SPACE to jump (hold for higher · tap again for double jump)</p>
   <p class="touchhint">Use the on-screen buttons. Tap JUMP twice for a double jump.</p>
   <p>Collect golden rings. Difficulty ramps every level.</p>
@@ -2034,6 +2039,19 @@ let cloudShapes = null;
     { name: 'Dog',   emoji: '🐶', file: 'models/Dog.glb',   idle: 'Idle', run: 'Gallop', air: 'Gallop_Jump', fallback: buildDog,   scale: 0.55 }
   ];
 
+  // Each animal plays differently. Unset fields fall back to the defaults in the update loop
+  // (run 9, jump 14, air jump 12, 1 air jump, bounce 19, no fetch, crumble hold ×1).
+  const ABILITIES = {
+    Fox:   { name: 'Lucky Tail',  tile: 'Lucky tail',    desc: 'Survives one fall per run.', save: true },
+    Cat:   { name: 'Triple Jump', tile: 'Triple jump',   desc: 'Jumps three times before landing.', airJumps: 2 },
+    Bunny: { name: 'Super Hop',   tile: 'Super hop',     desc: 'Jumps much higher than the others.', jumpV: 16.5, airJumpV: 13.5 },
+    Wolf:  { name: 'Swift',       tile: 'Fastest',       desc: 'Runs faster than any other animal.', runV: 11.25 },
+    Panda: { name: 'Big Bounce',  tile: 'Big bounce',    desc: 'Bouncy platforms launch it sky-high, and crumbling ones hold twice as long.', bounceV: 25, crumbleHold: 2 },
+    Dog:   { name: 'Fetch',       tile: 'Fetches rings', desc: 'Pulls in nearby rings, even without a magnet.', fetchR2: 14 }
+  };
+  const ability = () => ABILITIES[ANIMAL_DEFS[animalIdx].name];
+  const airJumps = () => (ability().airJumps || 1) + (player.powerups.triplejump.active ? 1 : 0);
+
   // Sprint trail recipes per animal — each has a distinct look
   const TRAIL_CONFIGS = {
     Fox:   { colors: [0xff6b22, 0xffaa44, 0xffe066],          scale: 0.85, freq: 0.05, gravity:  3, upward: true,  life: 0.55, spread: 1.0, count: 1, yOff: 0.25 },
@@ -2222,7 +2240,19 @@ let cloudShapes = null;
     currentTrail = TRAIL_CONFIGS[def.name] || TRAIL_CONFIGS.Fox;
     // Update picker highlight so the chosen animal is always visually marked
     animalBtnList.forEach(b => b.classList.toggle('selected', +b.dataset.animal === animalIdx));
+    const ab = ABILITIES[def.name];
+    perkDescEl.innerHTML = '';
+    const strong = document.createElement('strong');
+    strong.textContent = `${def.emoji} ${ab.name}: `;
+    perkDescEl.append(strong, ab.desc);
   }
+  const perkDescEl = document.getElementById('perkDesc');
+  animalBtnList.forEach(b => {
+    const perk = document.createElement('span');
+    perk.className = 'perk';
+    perk.textContent = ABILITIES[ANIMAL_DEFS[+b.dataset.animal].name].tile;
+    b.appendChild(perk);
+  });
 
   // Crossfade between idle/run/air clips
   function setAnimState(state) {
@@ -2604,7 +2634,7 @@ let cloudShapes = null;
   function updatePowerupHud() {
     if (!activePowersEl) return;
     const now = clock.elapsedTime;
-    const items = [];
+    const items = player.luckyTail ? ['<span class="chip lucky">🦊 Lucky tail</span>'] : [];
     for (const type of POWERUP_TYPES) {
       const pu = player.powerups[type];
       if (!pu.active) continue;
@@ -2960,11 +2990,35 @@ let cloudShapes = null;
   }
 
   // Update disappearing platforms each frame
+  // Drop the animal back onto the last solid platform it stood on, or the nearest one
+  // still standing if that one has since been cleaned up behind the player.
+  function rescueFromFall(color) {
+    let p = platforms.includes(player.lastSafe) ? player.lastSafe : null;
+    if (!p) {
+      let bestD = Infinity;
+      for (const q of platforms) {
+        if (q.type === 'disappearing') continue;
+        const d = Math.abs(q.x - player.pos.x) + Math.abs(q.z - player.pos.z);
+        if (d < bestD) { bestD = d; p = q; }
+      }
+    }
+    if (!p) return false;
+    burst(player.pos.x, player.pos.y + 1, player.pos.z, color, 20, { speed: 4, gravity: -2, upward: true, life: 0.9 });
+    player.pos.set(p.x, p.y + p.hh + 1.2, p.z);
+    player.vel.set(0, 0, 0);
+    player.bounced = false;
+    player.jumpsLeft = airJumps();
+    burst(player.pos.x, player.pos.y, player.pos.z, color, 30, { speed: 5, gravity: 4, upward: true });
+    sfx.coin();
+    return true;
+  }
+
   function updateDisappearing(dt) {
+    const hold = ability().crumbleHold || 1;
     for (let i = platforms.length - 1; i >= 0; i--) {
       const p = platforms[i];
       if (!p.disappearTimer) continue;
-      p.disappearTimer += dt;
+      p.disappearTimer += dt / hold;
       if (p.disappearTimer > 0.55 && p.disappearTimer < 1.2) {
         // shake + flicker
         p.mesh.position.x = p.x + (Math.random() - 0.5) * 0.18;
@@ -3182,16 +3236,19 @@ let cloudShapes = null;
           player.pos.y = p.y + p.hh + 0.001;
           player.vel.y = 0;
           player.onGround = true;
+          player.bounced = false;
           player.coyote = 0.12;
-          player.jumpsLeft = player.powerups.triplejump.active ? 2 : 1;
+          player.jumpsLeft = airJumps();
           player.groundedPlatform = p;
+          if (p.type !== 'disappearing') player.lastSafe = p;
           if (wasAirborne && landingVy < -8) {
             sfx.land();
             burst(player.pos.x, player.pos.y, player.pos.z, 0xddddee, 8, { speed: 2.5, gravity: 8 });
           }
           // ---- Special platform effects on landing ----
           if (p.type === 'bouncy') {
-            player.vel.y = 19;
+            player.vel.y = ability().bounceV || 19;
+            player.bounced = true;
             player.onGround = false;
             sfx.djump();
             burst(player.pos.x, player.pos.y, player.pos.z, 0x66ff88, 14, { speed: 3, gravity: 6, upward: true });
@@ -3316,7 +3373,10 @@ let cloudShapes = null;
       player.powerups[t].active = false;
       player.powerups[t].until = 0;
     }
-    if (activePowersEl) activePowersEl.innerHTML = '';
+    player.luckyTail = !!ability().save;
+    player.lastSafe = null;
+    player.bounced = false;
+    updatePowerupHud();
     player.flipT = 0;
     player.trailTimer = 0;
     player.worldHidden = false;
@@ -3328,9 +3388,15 @@ let cloudShapes = null;
     // Back from the dead: crossfade the model out of its death pose
     setAnimState('idle');
   }
+  let lastRunAnimal = -1;
   function startGame() {
     reset();
     started = true;
+    if (animalIdx !== lastRunAnimal) {
+      lastRunAnimal = animalIdx;
+      const ab = ability();
+      showToast(`${ANIMAL_DEFS[animalIdx].emoji} ${ab.name}`, ab.desc);
+    }
     overlay.classList.add('hidden');
     submitBox.classList.add('hidden');
     lbPanel.classList.add('hidden');
@@ -3547,8 +3613,10 @@ let cloudShapes = null;
       ix /= m; iz /= m;
     }
 
-    const tvx = ix * 9;
-    const tvz = iz * 9;
+    const ab = ability();
+    const runV = ab.runV || 9;
+    const tvx = ix * runV;
+    const tvz = iz * runV;
     // Ice platforms have very low ground friction (slippery)
     const onIce = player.onGround && player.groundedPlatform && player.groundedPlatform.type === 'ice';
     const accel = onIce ? 5 : (player.onGround ? 28 : 14);
@@ -3561,15 +3629,17 @@ let cloudShapes = null;
     player.coyote -= wDt;
     if (player.jumpBuffer > 0) {
       if (player.onGround || player.coyote > 0) {
-        player.vel.y = 14;
+        player.vel.y = ab.jumpV || 14;
+        player.bounced = false;
         player.onGround = false;
         player.coyote = 0;
         player.jumpBuffer = 0;
-        player.jumpsLeft = player.powerups.triplejump.active ? 2 : 1;
+        player.jumpsLeft = airJumps();
         sfx.jump();
         burst(player.pos.x, player.pos.y, player.pos.z, 0xccddff, 6, { speed: 2, gravity: 6 });
       } else if (player.jumpsLeft > 0) {
-        player.vel.y = 12;
+        player.vel.y = ab.airJumpV || 12;
+        player.bounced = false;
         player.jumpsLeft--;
         player.jumpBuffer = 0;
         sfx.djump();
@@ -3583,7 +3653,8 @@ let cloudShapes = null;
           : 'back';
       }
     }
-    if (!jumpHeld && player.vel.y > 6) player.vel.y = 6;
+    // Releasing jump early cuts a jump short, but never a bouncy-platform launch
+    if (!jumpHeld && !player.bounced && player.vel.y > 6) player.vel.y = 6;
 
     player.vel.y -= 36 * wDt;
     // Glider clamps the falling speed while holding jump
@@ -3717,22 +3788,27 @@ let cloudShapes = null;
       }
     }
     const magnetOn = player.powerups.magnet.active;
+    // Magnet pulls rings within ~7 units; the Dog fetches within ~3.7 units, more gently.
+    // c.pull (0→1) builds while in range, so a ring glides all the way to the animal.
+    const pullR2 = magnetOn ? 50 : (ab.fetchR2 || 0);
+    const pullSpeed = magnetOn ? 2.5 : 1.6;
     for (const c of coins) {
       if (c.collected) continue;
       // drift around on top of the platform — Lissajous-style pattern
       c.x = c.baseX + Math.sin(t * c.freqX + c.phase) * c.ampX;
       c.z = c.baseZ + Math.cos(t * c.freqZ + c.phase * 1.3) * c.ampZ;
-      // Magnet pulls coins within ~7 units smoothly toward the player
-      if (magnetOn) {
-        const ddx = px - c.x, ddz = pz - c.z;
-        if (ddx*ddx + ddz*ddz < 50) {
-          c.x += ddx * Math.min(1, 6 * dt);
-          c.z += ddz * Math.min(1, 6 * dt);
-        }
+      let cy = c.baseY + Math.sin(t * 3 + c.bobPhase) * 0.12;
+      const ddx = px - c.x, ddz = pz - c.z;
+      const inRange = pullR2 > 0 && ddx*ddx + ddz*ddz < pullR2;
+      c.pull = inRange ? Math.min(1, (c.pull || 0) + pullSpeed * dt) : Math.max(0, (c.pull || 0) - dt);
+      if (c.pull > 0) {
+        const e = c.pull * c.pull;
+        c.x += ddx * e;
+        c.z += ddz * e;
+        cy += (pyc - cy) * e;
       }
-      c.mesh.position.x = c.x;
-      c.mesh.position.z = c.z;
-      c.mesh.position.y = c.baseY + Math.sin(t * 3 + c.bobPhase) * 0.12;
+      c.y = cy;
+      c.mesh.position.set(c.x, cy, c.z);
       c.mesh.rotation.z += dt * 3.5;
     }
 
@@ -3759,13 +3835,14 @@ let cloudShapes = null;
     updateDisappearing(dt);
 
     if (player.pos.y < LAVA_Y + 0.5) {
-      // Shield save: spend the shield, restore to a safe height instead of dying
-      if (player.powerups.shield.active) {
+      // Saves (shield first, then the Fox's once-per-run Lucky Tail) put the animal
+      // back on solid ground instead of ending the run
+      if (player.powerups.shield.active && rescueFromFall(0xffd633)) {
         player.powerups.shield.active = false;
-        player.pos.y = LAVA_Y + 8;
-        player.vel.y = 4;
-        burst(player.pos.x, player.pos.y, player.pos.z, 0xffd633, 30, { speed: 5, gravity: 4, upward: true });
-        sfx.coin();
+        updatePowerupHud();
+      } else if (player.luckyTail && rescueFromFall(0xff9a3c)) {
+        player.luckyTail = false;
+        showToast('🦊 Lucky Tail!', 'Saved from the fall. Only once per run!');
         updatePowerupHud();
       } else {
         lavaDeath();
