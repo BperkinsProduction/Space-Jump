@@ -34,15 +34,24 @@
     pointer-events: none; z-index: 10;
     background: rgba(0,0,0,0.35);
     padding: 6px 10px; border-radius: 6px;
+    display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px;
   }
+  #hud .hi { white-space: nowrap; }
   #overlay {
     position: fixed; inset: 0;
     display: flex; flex-direction: column;
-    align-items: center; justify-content: center;
+    align-items: center; justify-content: flex-start;
     background: rgba(0,0,0,0.55);
     text-align: center; z-index: 20;
-    padding: env(safe-area-inset-top) env(safe-area-inset-right)
-             env(safe-area-inset-bottom) env(safe-area-inset-left);
+    box-sizing: border-box;
+    padding: calc(env(safe-area-inset-top, 0px) + 64px) env(safe-area-inset-right)
+             calc(env(safe-area-inset-bottom, 0px) + 16px) env(safe-area-inset-left);
+    overflow-y: auto; -webkit-overflow-scrolling: touch; touch-action: pan-y;
+  }
+  /* auto margins center the menu when it fits and let it scroll from the top when it doesn't */
+  .ov-inner {
+    margin: auto 0; width: 100%;
+    display: flex; flex-direction: column; align-items: center;
   }
   #overlay h1 {
     font-size: 48px; margin: 0 0 12px;
@@ -70,7 +79,8 @@
     display: flex; flex-wrap: wrap; gap: 8px;
     justify-content: center; max-width: 540px; margin: 4px auto 6px;
   }
-  .animal-btn {
+  #overlay .animal-btn {
+    margin: 0; box-shadow: none; font-size: 16px; font-weight: 600;
     background: rgba(255,255,255,0.12);
     border: 2px solid rgba(255,255,255,0.25);
     color: #fff; padding: 8px 12px; border-radius: 12px;
@@ -81,8 +91,8 @@
   }
   .animal-btn .emoji { font-size: 32px; line-height: 1; }
   .animal-btn .name  { font-size: 13px; opacity: 0.9; }
-  .animal-btn:active { transform: scale(0.95); }
-  .animal-btn.selected {
+  #overlay .animal-btn:active { transform: scale(0.95); }
+  #overlay .animal-btn.selected {
     background: linear-gradient(rgba(255,200,120,0.6), rgba(255,120,80,0.5));
     border-color: rgba(255,220,180,0.85);
     box-shadow: 0 0 18px rgba(255,150,80,0.55);
@@ -280,7 +290,8 @@
   }
   #touch .pad {
     position: absolute;
-    left: 30px; bottom: 30px;
+    left: calc(env(safe-area-inset-left, 0px) + 30px);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 30px);
     width: 200px; height: 200px;
     pointer-events: none;
   }
@@ -304,7 +315,8 @@
   #touch .btn-back { left: 65px; top: 130px; }
   #touch .btn-jump {
     position: absolute;
-    right: 30px; bottom: 30px;
+    right: calc(env(safe-area-inset-right, 0px) + 30px);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 30px);
     width: 130px; height: 130px;
     border-radius: 50%;
     background: linear-gradient(rgba(255,180,90,0.6), rgba(255,90,60,0.7));
@@ -325,6 +337,58 @@
   @media (pointer: coarse) { #touch { display: block; } }
   /* Allow forcing via class for testing */
   #touch.force-show { display: block; }
+
+  /* Touch screens get touch instructions, keyboards get key instructions */
+  .touchhint { display: none; }
+  @media (pointer: coarse) { .touchhint { display: block; } .kbd { display: none; } }
+  @media (display-mode: standalone) { .a2hs-tip { display: none; } }
+
+  /* ---------- Phones ---------- */
+  @media (max-width: 600px), (max-height: 500px) {
+    #touch .pad {
+      left: calc(env(safe-area-inset-left, 0px) + 12px);
+      bottom: calc(env(safe-area-inset-bottom, 0px) + 14px);
+      width: 168px; height: 168px;
+    }
+    #touch .pad button { width: 58px; height: 58px; font-size: 22px; }
+    #touch .btn-fwd  { left: 55px; top: 0; }
+    #touch .btn-left { left: 0; top: 55px; }
+    #touch .btn-right{ left: 110px; top: 55px; }
+    #touch .btn-back { left: 55px; top: 110px; }
+    #touch .btn-jump {
+      right: calc(env(safe-area-inset-right, 0px) + 14px);
+      bottom: calc(env(safe-area-inset-bottom, 0px) + 22px);
+      width: 108px; height: 108px; font-size: 22px;
+    }
+    #topControls { gap: 6px; }
+    #topControls button { min-width: 40px; height: 40px; font-size: 19px; }
+    #overlay h1 { font-size: 36px; letter-spacing: 1px; margin-bottom: 6px; }
+    #overlay p { font-size: 15px; line-height: 1.4; }
+    #levelFlash { font-size: 40px; width: 92vw; }
+    #pausedOverlay div { font-size: 40px; }
+  }
+  @media (max-width: 600px) {
+    #hud {
+      font-size: 14px; padding: 5px 8px; column-gap: 10px;
+      max-width: calc(100vw - 190px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+    }
+    #hud .sep { display: none; }
+    #activePowers, #toasts { top: calc(env(safe-area-inset-top, 0px) + 66px); }
+    .toast { max-width: 86vw; }
+    .animal-row { gap: 6px; }
+    #overlay .animal-btn { min-width: 0; width: 28vw; max-width: 110px; padding: 6px 4px; }
+    .animal-btn .emoji { font-size: 28px; }
+    #overlay .row { width: 100%; max-width: 340px; gap: 10px; }
+    #overlay .row button { margin-top: 12px; padding: 12px 8px; font-size: 16px; flex: 1 1 0; }
+    #overlay .row #startBtn { flex-basis: 100%; font-size: 22px; padding: 14px; }
+  }
+  /* Landscape phones: very little height, so tighten everything vertically */
+  @media (max-height: 500px) {
+    #overlay { padding-top: calc(env(safe-area-inset-top, 0px) + 56px); }
+    #overlay h1 { font-size: 30px; }
+    #overlay p { margin: 2px 0; }
+    #overlay .row button { margin-top: 10px; padding: 10px 24px; font-size: 18px; }
+  }
 </style>
 </head>
 <body>
@@ -343,7 +407,7 @@
     if (b && m && !window.__bootStarted) m.textContent = 'Still loading… check your internet connection.';
   }, 15000);
 </script>
-<div id="hud">Level: <span id="level">1</span> &nbsp;·&nbsp; Score: <span id="score">0</span> &nbsp;·&nbsp; <span style="color:#ffd633;">⊙</span> <span id="coins">0</span> &nbsp;·&nbsp; Best: <span id="best">0</span> <span id="comboChip" class="hidden">🔥 ×2</span></div>
+<div id="hud"><span class="hi">Level: <span id="level">1</span></span><span class="sep">·</span><span class="hi">Score: <span id="score">0</span></span><span class="sep">·</span><span class="hi"><span style="color:#ffd633;">⊙</span> <span id="coins">0</span></span><span class="sep">·</span><span class="hi">Best: <span id="best">0</span></span><span id="comboChip" class="hidden">🔥 ×2</span></div>
 <div id="activePowers"></div>
 <div id="topControls">
   <button id="qualityBtn" type="button" title="Graphics quality">HD</button>
@@ -375,7 +439,7 @@
   <button class="btn-jump" data-key="Space" aria-label="Jump">JUMP</button>
 </div>
 
-<div id="overlay">
+<div id="overlay"><div class="ov-inner">
   <h1 id="title">CLOUD HOPPER</h1>
   <p id="subtitle">Hop the animal across floating platforms in a sea of fluffy clouds.</p>
   <p style="font-size:16px;margin:10px 0 6px;opacity:0.9;">Choose your animal:</p>
@@ -388,7 +452,7 @@
     <button class="animal-btn" data-animal="5" type="button"><span class="emoji">🐶</span><span class="name">Dog</span></button>
   </div>
   <p class="kbd">Keys: W/↑ forward · A D strafe · SPACE to jump (hold for higher · tap again for double jump)</p>
-  <p class="touchhint">On iPad: use the on-screen buttons. Tap JUMP twice for a double jump.</p>
+  <p class="touchhint">Use the on-screen buttons. Tap JUMP twice for a double jump.</p>
   <p>Collect golden rings. Difficulty ramps every level.</p>
   <div id="submitBox" class="hidden">
     <input id="nameInput" maxlength="12" placeholder="YOUR NAME" autocomplete="off" spellcheck="false" />
@@ -400,10 +464,10 @@
     <button id="shuffleBtn" class="secondary" type="button">🎲 Shuffle Tiles</button>
     <button id="lbBtn" class="secondary" type="button">🏆 Leaderboard</button>
   </div>
-  <p style="opacity:0.7;font-size:14px;margin-top:18px;">
+  <p class="a2hs-tip" style="opacity:0.7;font-size:14px;margin-top:18px;">
     Tip: tap the Share icon in Safari → "Add to Home Screen" to play full-screen.
   </p>
-</div>
+</div></div>
 
 <script type="importmap">
 {
@@ -429,6 +493,8 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
   const titleEl = document.getElementById('title');
   const subtitleEl = document.getElementById('subtitle');
   const startBtn = document.getElementById('startBtn');
+  // iOS home-screen apps don't always match (display-mode: standalone)
+  if (navigator.standalone) document.querySelector('.a2hs-tip')?.remove();
 
   const storage = {
     get(k) { try { return localStorage.getItem(k); } catch { return null; } },
@@ -712,11 +778,22 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
   renderer.toneMappingExposure = 1.0;
   document.body.appendChild(renderer.domElement);
 
+  // PerspectiveCamera.fov is vertical, so a tall portrait phone would only see a ~33°
+  // sliver sideways. Widen the vertical FOV until at least MIN_HFOV fits across.
+  const BASE_FOV = 65, MAX_FOV = 88, MIN_HFOV = 50;
+  function fitFov() {
+    const need = 2 * THREE.MathUtils.radToDeg(
+      Math.atan(Math.tan(THREE.MathUtils.degToRad(MIN_HFOV / 2)) / camera.aspect));
+    camera.fov = Math.min(MAX_FOV, Math.max(BASE_FOV, need));
+  }
   function onResize() {
     camera.aspect = innerWidth / innerHeight;
+    fitFov();
     camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
   }
+  fitFov();
+  camera.updateProjectionMatrix();
   window.addEventListener('resize', onResize);
   window.addEventListener('orientationchange', () => setTimeout(onResize, 100));
 
@@ -2006,7 +2083,8 @@ let cloudShapes = null;
   }
 
   // ---------- Shell-texture fur ----------
-  // N copies of each fur-covered skinned mesh, pushed outward along the (skinned) normal.
+  // N copies of each fur-covered skinned mesh, pushed outward along the bind-pose normal
+  // and then skinned, so the strands bend with the body.
   // Each shell discards fragments using 3D cell noise in bind-pose space, so strands stick
   // to the body while it animates. Lower shells are darker (self-shadowing).
   const FUR = {
@@ -2027,9 +2105,11 @@ let cloudShapes = null;
       .replace('#include <common>', `#include <common>
         uniform float uShellH, uFurLen, uFurFreq;
         varying vec3 vFurP;`)
-      .replace('#include <skinning_vertex>', `#include <skinning_vertex>
+      // Must offset before skinning: uFurLen is in raw geometry units, and gltfpack's
+      // integer positions only reach real units via the bone matrices (~100× apart).
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
         vFurP = position * uFurFreq;
-        transformed += normalize(objectNormal) * uFurLen * uShellH;`);
+        transformed += normalize(normal) * uFurLen * uShellH;`);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
         uniform float uShellH, uLumMask;
@@ -2070,7 +2150,7 @@ let cloudShapes = null;
         };
         m.roughness = 0.95;
         m.onBeforeCompile = furPatch;
-        m.customProgramCacheKey = () => 'furShell1' + (m.map ? 'map' : '');
+        m.customProgramCacheKey = () => 'furShell2' + (m.map ? 'map' : '');
         const shell = new THREE.SkinnedMesh(mesh.geometry, m);
         shell.bind(mesh.skeleton, mesh.bindMatrix);
         shell.frustumCulled = false;
