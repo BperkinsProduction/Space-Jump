@@ -140,6 +140,46 @@
     border: 0; border-radius: 8px; cursor: pointer; font-weight: 700;
   }
 
+  /* ---------- Loading screen ---------- */
+  #boot {
+    position: fixed; inset: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(#3a80c8, #88ccff 55%, #e2f0ff);
+    transition: opacity 0.6s ease;
+  }
+  #boot.done { opacity: 0; pointer-events: none; }
+  .boot-inner { text-align: center; width: min(360px, 80vw); }
+  .boot-title {
+    font-size: 40px; font-weight: 800; letter-spacing: 3px; color: #fff;
+    text-shadow: 0 0 20px #6cf, 0 2px 8px rgba(0,40,90,0.4); margin-bottom: 18px;
+  }
+  .boot-stage { position: relative; height: 96px; margin-bottom: 10px; }
+  #bootAnimal {
+    position: absolute; left: 50%; bottom: 26px; font-size: 44px;
+    transform: translateX(-50%); animation: bootHop 0.7s ease-in-out infinite;
+  }
+  .boot-cloud {
+    position: absolute; left: 50%; bottom: 0; width: 120px; height: 34px;
+    transform: translateX(-50%); background: #fff; border-radius: 30px;
+    box-shadow: -34px -8px 0 -2px #fff, 30px -12px 0 -4px #fff, 0 6px 14px rgba(0,50,100,0.18);
+  }
+  @keyframes bootHop {
+    0%, 100% { transform: translate(-50%, 0) scaleY(0.92); }
+    45% { transform: translate(-50%, -34px) scaleY(1.04); }
+    55% { transform: translate(-50%, -34px) scaleY(1.04); }
+  }
+  .boot-track {
+    height: 12px; background: rgba(255,255,255,0.45); border-radius: 8px; overflow: hidden;
+    box-shadow: inset 0 1px 3px rgba(0,40,90,0.25);
+  }
+  #bootBar {
+    height: 100%; width: 4%; border-radius: 8px;
+    background: linear-gradient(90deg, #ffd24d, #ffb31a);
+    box-shadow: 0 0 10px rgba(255,200,60,0.8);
+    transition: width 0.35s ease;
+  }
+  #bootMsg { margin-top: 12px; color: #fff; font-size: 16px; text-shadow: 0 1px 4px rgba(0,40,90,0.45); min-height: 20px; }
+
   /* ---------- Combo chip ---------- */
   #comboChip {
     display: inline-block; margin-left: 6px; padding: 1px 9px;
@@ -158,13 +198,14 @@
     display: flex; gap: 8px; z-index: 25;
   }
   #topControls button {
-    width: 44px; height: 44px; font-size: 22px;
+    min-width: 44px; height: 44px; font-size: 22px;
     background: rgba(0,0,0,0.4); color: #fff;
     border: 1px solid rgba(255,255,255,0.35); border-radius: 10px;
     cursor: pointer; -webkit-tap-highlight-color: transparent;
     backdrop-filter: blur(3px);
   }
   #topControls button:active { transform: scale(0.93); }
+  #qualityBtn { font-size: 15px !important; font-weight: 800; letter-spacing: 1px; }
 
   /* ---------- Achievement toasts ---------- */
   #toasts {
@@ -287,9 +328,25 @@
 </style>
 </head>
 <body>
+<div id="boot">
+  <div class="boot-inner">
+    <div class="boot-title">CLOUD HOPPER</div>
+    <div class="boot-stage"><span id="bootAnimal">🦊</span><div class="boot-cloud"></div></div>
+    <div class="boot-track"><div id="bootBar"></div></div>
+    <div id="bootMsg">Loading…</div>
+  </div>
+</div>
+<script>
+  // Plain (non-module) watchdog: if the game engine can't download at all, say so.
+  setTimeout(function () {
+    var b = document.getElementById('boot'), m = document.getElementById('bootMsg');
+    if (b && m && !window.__bootStarted) m.textContent = 'Still loading… check your internet connection.';
+  }, 15000);
+</script>
 <div id="hud">Level: <span id="level">1</span> &nbsp;·&nbsp; Score: <span id="score">0</span> &nbsp;·&nbsp; <span style="color:#ffd633;">⊙</span> <span id="coins">0</span> &nbsp;·&nbsp; Best: <span id="best">0</span> <span id="comboChip" class="hidden">🔥 ×2</span></div>
 <div id="activePowers"></div>
 <div id="topControls">
+  <button id="qualityBtn" type="button" title="Graphics quality">HD</button>
   <button id="musicBtn" type="button" title="Music on/off">🔊</button>
   <button id="pauseBtn" type="button" title="Pause (P)">⏸</button>
 </div>
@@ -359,6 +416,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 (() => {
   // ---------- DOM ----------
@@ -379,6 +437,64 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
   let best = +storage.get('spaceJumper3DBest') || 0;
   let bestCoins = +storage.get('spaceJumper3DBestCoins') || 0;
   bestEl.textContent = best;
+
+  // ---------- Boot loader: essentials first, everything else streams in after ----------
+  window.__bootStarted = true;
+  const bootEl = document.getElementById('boot');
+  const bootBar = document.getElementById('bootBar');
+  const bootMsg = document.getElementById('bootMsg');
+  const bootAnimalEl = document.getElementById('bootAnimal');
+  const boot = { total: 0, done: 0, finished: false, later: [] };
+  const BOOT_LINES = ['Painting the sky…', 'Fluffing the clouds…', 'Growing the grass…',
+                      'Grooming the fur…', 'Polishing the golden rings…', 'Almost ready…'];
+  const BOOT_ANIMALS = ['🦊', '🐱', '🐰', '🐺', '🐼', '🐶'];
+  let bootLine = 0;
+  bootMsg.textContent = BOOT_LINES[0];
+  const bootTicker = setInterval(() => {
+    bootLine = Math.min(bootLine + 1, BOOT_LINES.length - 1);
+    bootMsg.textContent = BOOT_LINES[bootLine];
+    bootAnimalEl.textContent = BOOT_ANIMALS[(bootLine + 1) % BOOT_ANIMALS.length];
+  }, 1400);
+  function bootTrack() {
+    boot.total++;
+    let fired = false;
+    return () => {
+      if (fired) return;
+      fired = true;
+      boot.done++;
+      bootBar.style.width = Math.max(4, Math.round(100 * boot.done / boot.total)) + '%';
+      if (boot.done >= boot.total) finishBoot();
+    };
+  }
+  function whenBooted(fn) { if (boot.finished) fn(); else boot.later.push(fn); }
+  function finishBoot() {
+    if (boot.finished) return;
+    boot.finished = true;
+    clearInterval(bootTicker);
+    bootBar.style.width = '100%';
+    bootMsg.textContent = 'Ready!';
+    setTimeout(() => { bootEl.classList.add('done'); setTimeout(() => bootEl.remove(), 700); }, 300);
+    // stream in the rest (other animals, heaven, other worlds) while the player is on the menu
+    const later = boot.later; boot.later = [];
+    later.forEach(fn => { try { fn(); } catch (e) { console.warn(e); } });
+  }
+  setTimeout(finishBoot, 20000);   // never trap the player on the loading screen
+
+  // ---------- Graphics quality (HD / SD for older devices) ----------
+  const LOW_Q = storage.get('cloudHopperQuality') === 'low';
+  const qualityBtn = document.getElementById('qualityBtn');
+  qualityBtn.textContent = LOW_Q ? 'SD' : 'HD';
+  qualityBtn.addEventListener('click', () => {
+    storage.set('cloudHopperQuality', LOW_Q ? 'high' : 'low');
+    location.reload();
+  });
+
+  // Compressed (meshopt) glTF loader used for every model
+  function makeGLTFLoader() {
+    const l = new GLTFLoader();
+    l.setMeshoptDecoder(MeshoptDecoder);
+    return l;
+  }
 
   // Prevent iOS pinch/double-tap zoom
   document.addEventListener('gesturestart', e => e.preventDefault());
@@ -586,10 +702,10 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
   camera.lookAt(0, 1, 0);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setPixelRatio(Math.min(devicePixelRatio, LOW_Q ? 1 : 2));
   renderer.setSize(innerWidth, innerHeight);
   renderer.setClearColor(0x88ccff);
-  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.enabled = !LOW_Q;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   // Filmic tone mapping — softer highlights, richer color response (the big "HD" switch)
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -730,9 +846,10 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
   let skyMeta = null;
   const skyTextures = {};
   const texLoader = new THREE.TextureLoader();
+  const doneSky = bootTrack();
   fetch('textures/skies.json').then(r => r.ok ? r.json() : null).then(m => {
     skyMeta = m;
-    if (!m) return;
+    if (!m) { doneSky(); return; }
     // distance fog matches each panorama's measured horizon color
     for (const t of THEMES) {
       const sm = m[t.sky];
@@ -742,15 +859,15 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
     themeState.fog.copy(targetColors.fog);
     themeState.clear.copy(targetColors.clear);
     applyThemeState();
-    loadSkyTexture(targetTheme.sky, () => showSkyInstant(targetTheme));
-    // quietly preload the other worlds' skies
-    setTimeout(() => THEMES.forEach(t => loadSkyTexture(t.sky)), 4000);
-  }).catch(() => {});
+    loadSkyTexture(targetTheme.sky, () => { showSkyInstant(targetTheme); doneSky(); }, doneSky);
+    // quietly preload the other worlds' skies once the essentials are in
+    whenBooted(() => THEMES.forEach(t => loadSkyTexture(t.sky)));
+  }).catch(() => doneSky());
 
-  function loadSkyTexture(key, cb) {
+  function loadSkyTexture(key, cb, onErr) {
     if (!key) return;
     if (skyTextures[key]) { if (skyTextures[key].image) cb && cb(skyTextures[key]); return; }
-    const tex = texLoader.load(`textures/sky_${key}.jpg`, (t) => cb && cb(t));
+    const tex = texLoader.load(`textures/sky_${key}.webp`, (t) => cb && cb(t), undefined, () => onErr && onErr());
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.generateMipmaps = false;
     tex.minFilter = THREE.LinearFilter;
@@ -880,7 +997,8 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
   // Upgrade to Blender-made cumulus (baked sky lighting in vertex colors) once loaded
 let cloudShapes = null;
   const cloudMat = new THREE.MeshBasicMaterial({ vertexColors: true, color: 0xffffff, toneMapped: false, fog: true });
-  new GLTFLoader().load('models/clouds.glb', (gltf) => {
+  const doneClouds = bootTrack();
+  makeGLTFLoader().load('models/clouds.glb', (gltf) => { try {
     const shapes = [];
     gltf.scene.traverse(o => { if (o.isMesh) shapes.push(o.geometry); });
     if (!shapes.length) return;
@@ -897,7 +1015,7 @@ let cloudShapes = null;
       m.rotation.y = Math.random() * Math.PI * 2;
       c.group.add(m);
     }
-  }, undefined, () => {});
+  } finally { doneClouds(); } }, undefined, () => doneClouds());
 
   // ---------- Theme worlds ----------
   // Each theme defines the sky gradient, fog, ambient + sun light, sun disc, and cloud colors.
@@ -1378,10 +1496,10 @@ let cloudShapes = null;
     heaven.jesus.visible = false;      // retire the primitive stand-in
     heaven.group.add(sp);
   }, undefined, onFail);
-  loadJesus('textures/jesus.webp', () => loadJesus('textures/jesus.png', () => {}));
+  whenBooted(() => loadJesus('textures/jesus.webp', () => loadJesus('textures/jesus.png', () => {})));
 
   // Gates: ornate gold + pearl model with hinged doors
-  new GLTFLoader().load('models/gates.glb', (gltf) => {
+  whenBooted(() => makeGLTFLoader().load('models/gates.glb', (gltf) => {
     const gl = gltf.scene.getObjectByName('Gate_L');
     const gr = gltf.scene.getObjectByName('Gate_R');
     const fr = gltf.scene.getObjectByName('Frame');
@@ -1410,7 +1528,7 @@ let cloudShapes = null;
     heaven.group.traverse(o => { if (o.userData.primitiveFrame) o.visible = false; });
     fr.position.set(0, GROUND, 0);
     heaven.group.add(fr);
-  }, undefined, () => {});
+  }, undefined, () => {}));
 
   // Cloud bank at heaven's floor built from the Blender cumulus shapes
   const heavenCloudMat = new THREE.MeshBasicMaterial({ vertexColors: true, color: 0xfff7ea, toneMapped: false, fog: false });
@@ -1860,17 +1978,22 @@ let cloudShapes = null;
   const animalBtnList = document.querySelectorAll('.animal-btn');
 
   // Async model loading — cache the parsed gltf per animal, upgrade in place when ready
-  const gltfLoader = new GLTFLoader();
+  const gltfLoader = makeGLTFLoader();
   const modelCache = {};
-  for (const def of ANIMAL_DEFS) {
+  function loadAnimalModel(def, essential) {
+    const done = essential ? bootTrack() : () => {};
     gltfLoader.load(def.file, (gltf) => {
       modelCache[def.name] = { scene: gltf.scene, clips: gltf.animations };
       // If this animal is currently displayed as a primitive fallback, swap it live
       if (ANIMAL_DEFS[animalIdx] === def) setAnimal(animalIdx);
+      done();
     }, undefined, (err) => {
       console.warn('Model failed to load, keeping primitive fallback:', def.file, err);
+      done();
     });
   }
+  loadAnimalModel(ANIMAL_DEFS[animalIdx], true);
+  whenBooted(() => ANIMAL_DEFS.forEach(def => { if (!modelCache[def.name]) loadAnimalModel(def, false); }));
 
   // Clip names vary ('Gallop' vs 'AnimalArmature|Gallop' vs triple-prefixed) — match
   // by the last |-segment first, then by substring.
@@ -1976,7 +2099,7 @@ let cloudShapes = null;
       air:   mixer.clipAction(findClip(cached.clips, def.air)),
       death: mixer.clipAction(findClip(cached.clips, 'Death'))
     };
-    const furMats = FUR[def.name] ? addFur(model, FUR[def.name]) : [];
+    const furMats = (!LOW_Q && FUR[def.name]) ? addFur(model, FUR[def.name]) : [];
     g.userData.furMats = furMats;
     actions.run.timeScale = 1.4;
     actions.death.setLoop(THREE.LoopOnce);
@@ -2437,16 +2560,17 @@ let cloudShapes = null;
   // Grass / rock / snow PBR textures (Poly Haven, CC0) applied with triplanar projection in
   // object space: no UVs needed, no stretching at any platform size, no swimming on movers.
   function loadTileTex(path, srgb) {
-    const t = texLoader.load(path);
+    const done = bootTrack();
+    const t = texLoader.load(path, done, undefined, done);
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
     t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
     t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
     return t;
   }
   const TEX = {
-    grass: loadTileTex('textures/grass_color.jpg', true),  grassN: loadTileTex('textures/grass_normal.jpg', false),
-    rock:  loadTileTex('textures/rock_color.jpg', true),   rockN:  loadTileTex('textures/rock_normal.jpg', false),
-    snow:  loadTileTex('textures/snow_color.jpg', true),   snowN:  loadTileTex('textures/snow_normal.jpg', false)
+    grass: loadTileTex('textures/grass_color.webp', true),  grassN: loadTileTex('textures/grass_normal.webp', false),
+    rock:  loadTileTex('textures/rock_color.webp', true),   rockN:  loadTileTex('textures/rock_normal.webp', false),
+    snow:  loadTileTex('textures/snow_color.webp', true),   snowN:  loadTileTex('textures/snow_normal.webp', false)
   };
   const TYPE_LOOK = {
     normal:       { top: 'grass', tint: [0.94, 1.1, 0.82] },
@@ -2530,7 +2654,8 @@ let cloudShapes = null;
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     return g;
   }
-  new GLTFLoader().load('models/islands.glb', (gltf) => {
+  const doneIslands = bootTrack();
+  makeGLTFLoader().load('models/islands.glb', (gltf) => { try {
     const list = [];
     gltf.scene.traverse(o => { if (o.isMesh) list.push(o.geometry); });
     if (!list.length) return;
@@ -2540,7 +2665,7 @@ let cloudShapes = null;
       p.mesh.geometry.dispose();
       p.mesh.geometry = makePlatformGeometry(p.w, p.h, p.d);
     }
-  }, undefined, () => {});
+  } finally { doneIslands(); } }, undefined, () => doneIslands());
 
   function addPlatform(x, y, z, w, h, d, colorHex, type = 'normal') {
     // Override visuals based on type
@@ -3114,6 +3239,7 @@ let cloudShapes = null;
     if (activePowersEl) activePowersEl.innerHTML = '';
     player.flipT = 0;
     player.trailTimer = 0;
+    player.worldHidden = false;
     combo = 0; comboTimer = 0; refreshComboChip();
     runStats.rings = 0; runStats.maxCombo = 0; runStats.flips = 0; runStats.powerups = 0;
     paused = false;
@@ -3230,6 +3356,14 @@ let cloudShapes = null;
       } else if (deathTimer < 3.4) {
         // ---- Phase 2: ASCEND TO HEAVEN ----
         setAnimState('idle');   // the spirit rises upright, out of the death pose
+        if (!player.worldHidden) {
+          // the world falls away so nothing blocks the view of heaven (rebuilt on reset)
+          player.worldHidden = true;
+          for (const p of platforms) p.mesh.visible = false;
+          for (const c of coins) c.mesh.visible = false;
+          for (const pu of powerups) pu.mesh.visible = false;
+          dropShadow.visible = false;
+        }
         const ascendT = (deathTimer - 1.2) / 2.2;
         const ease = 1 - Math.pow(1 - ascendT, 2);
         animalGroup.rotation.set(0, player.facing, 0);

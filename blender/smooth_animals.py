@@ -50,10 +50,25 @@ for name, level in SUBDIV.items():
                 # eyes stay glossy so they catch light
                 if 'eye' in mat.name.lower():
                     n.inputs['Roughness'].default_value = 0.15
+    # keep only the clips the game plays (idle / run / air / death) — one action each
+    KEEP = {'Fox': ('Idle', 'Gallop', 'Gallop_Jump', 'Death'), 'Wolf': ('Idle', 'Gallop', 'Gallop_Jump', 'Death'),
+            'Dog': ('Idle', 'Gallop', 'Gallop_Jump', 'Death'), 'Cat': ('Idle', 'Run', 'Jump_Loop', 'Death'),
+            'Bunny': ('Idle', 'Run', 'Jump_Idle', 'Death'), 'Panda': ('Idle', 'Run', 'Jump_Idle', 'Death')}[name]
+    chosen = {}
+    for act in sorted(bpy.data.actions, key=lambda a: len(a.name)):
+        base = act.name.split('|')[-1].strip()
+        if base in KEEP and base not in chosen:
+            chosen[base] = act
+    for act in list(bpy.data.actions):
+        if act not in chosen.values():
+            bpy.data.actions.remove(act)
+    for act in chosen.values():
+        act.use_fake_user = True
+    print(f'CLIPS {name}:', sorted(chosen))
     out = os.path.join(DST, f'{name}.glb')
     bpy.ops.export_scene.gltf(
         filepath=out, export_format='GLB', export_apply=True,
         export_animations=True, export_skins=True, export_yup=True,
-        export_animation_mode='ACTIONS'
+        export_animation_mode='ACTIONS', export_optimize_animation_size=True
     )
     print(f'SMOOTHED {name}: {tris_before} faces before, subdiv {level} -> {out} ({os.path.getsize(out)//1024} KB)')
