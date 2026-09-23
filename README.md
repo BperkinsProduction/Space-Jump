@@ -85,3 +85,7 @@ Animal models (`models/*.glb`) by [Quaternius](https://quaternius.com) via [Poly
 ## Deploy
 
 Static — drop it on Vercel, Netlify, GitHub Pages, or any CDN. Note: the game now uses ES modules, so it must be served over HTTP (it won't run from a `file://` URL).
+
+The global leaderboard (`api/scores.js`) needs Vercel plus an Upstash Redis database connected
+to the project (Storage → Connect). Environment variables only reach *new* deployments, so redeploy
+after connecting. Without a database, the game shows "Global leaderboard isn't connected yet".

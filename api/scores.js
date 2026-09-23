@@ -11,11 +11,20 @@ const MAX_SANE_SCORE = 50000;
 const TOP_N = 25;
 const ALLOWED_ANIMALS = ['🦊', '🐱', '🐰', '🐺', '🐼', '🐶'];
 
+// Vercel's "Connect database" dialog can add a custom prefix (e.g. STORAGE_KV_REST_API_URL),
+// so match on the suffix rather than an exact name.
 function redisConfig() {
-  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return null;
-  return { url, token };
+  const env = process.env;
+  for (const [urlSuffix, tokenSuffix] of [
+    ['KV_REST_API_URL', 'KV_REST_API_TOKEN'],
+    ['UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN']
+  ]) {
+    const urlKey = Object.keys(env).sort().find(k => k.endsWith(urlSuffix) && env[k]);
+    if (!urlKey) continue;
+    const token = env[urlKey.slice(0, -urlSuffix.length) + tokenSuffix];
+    if (token) return { url: env[urlKey].replace(/\/+$/, ''), token };
+  }
+  return null;
 }
 
 async function redis(commands) {
