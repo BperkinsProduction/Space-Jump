@@ -7,7 +7,7 @@ modifier (so the skin weights are interpolated onto the new vertices and all the
 animations still work), shade smooth, make materials matte like fur, re-export
 with every animation clip.
 """
-import bpy, sys, os
+import bpy, bmesh, sys, os
 
 argv = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
 SRC, DST = argv[0], argv[1]
@@ -22,6 +22,20 @@ for name, level in SUBDIV.items():
     bpy.ops.import_scene.gltf(filepath=src)
     meshes = [o for o in bpy.context.scene.objects if o.type == 'MESH']
     tris_before = sum(len(o.data.polygons) for o in meshes)
+    # The source models are flat-shaded, so every face arrives with its own copies of its corner
+    # vertices. Weld them first — otherwise subdivision rounds each face off on its own and the
+    # body turns into separate floating patches with gaps between them.
+    for ob in meshes:
+        bm = bmesh.new()
+        bm.from_mesh(ob.data)
+        co = [v.co for v in bm.verts]
+        diag = (max(c.x for c in co) - min(c.x for c in co)) ** 2 + (max(c.y for c in co) - min(c.y for c in co)) ** 2 \
+             + (max(c.z for c in co) - min(c.z for c in co)) ** 2
+        before = len(bm.verts)
+        bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5 * diag ** 0.5)
+        print(f'WELD {name}/{ob.name}: {before} -> {len(bm.verts)} verts')
+        bm.to_mesh(ob.data)
+        bm.free()
     for ob in meshes:
         bpy.ops.object.select_all(action='DESELECT')
         ob.select_set(True)

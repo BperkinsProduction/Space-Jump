@@ -82,6 +82,19 @@ The figure of Jesus is built on Blender Studio's Human Base Meshes — CC0.
 
 Animal models (`models/*.glb`) by [Quaternius](https://quaternius.com) via [Poly Pizza](https://poly.pizza) — CC0 / Public Domain. Rigged and animated low-poly models.
 
+## iPhone / iPad app (Xcode)
+
+`ios/CloudHopper.xcodeproj` wraps the game in a native app: a full-screen WKWebView that serves the
+game from inside the app bundle (custom `cloudhopper://` scheme), with three.js bundled in
+`ios/vendor/three` so it runs offline. A build phase (`ios/copy_game.sh`) copies `index.html`,
+`models/` and `textures/` into the app on every build, so the app always matches the web game.
+
+Open the project in Xcode, pick an iPhone or iPad simulator, and press ▶. To run it on a real device,
+choose your Apple ID team under Signing & Capabilities first. In Debug builds the game's console
+errors appear in Xcode's console, and Safari ▸ Develop ▸ Simulator can inspect the page.
+
+The app hides the leaderboard (its API only answers the website itself) and the "Add to Home Screen" tip.
+
 ## Deploy
 
 Static — drop it on Vercel, Netlify, GitHub Pages, or any CDN. Note: the game now uses ES modules, so it must be served over HTTP (it won't run from a `file://` URL).

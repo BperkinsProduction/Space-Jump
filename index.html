@@ -346,7 +346,8 @@
   .touchhint { display: none; }
   @media (pointer: coarse) { .touchhint { display: block; } .kbd { display: none; } }
   @media (display-mode: standalone) { .a2hs-tip { display: none; } }
-  .embedded #lbBtn, .embedded #lbPanel, .embedded #submitBox, .embedded .a2hs-tip { display: none !important; }
+  .embedded #lbBtn, .embedded #lbPanel, .embedded #submitBox, .embedded .a2hs-tip,
+  .native-app #lbBtn, .native-app #lbPanel, .native-app #submitBox, .native-app .a2hs-tip { display: none !important; }
 
   /* ---------- Phones ---------- */
   @media (max-width: 600px), (max-height: 500px) {
@@ -506,6 +507,9 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
   // install tip, and game events are posted to the host so it can narrate and award badges.
   const EMBED = new URLSearchParams(location.search).get('embed') === 'playground' && window.parent !== window;
   if (EMBED) document.documentElement.classList.add('embedded');
+  // Inside the iOS app (ios/ loads ?app=ios): no install tip, and no leaderboard — its API is
+  // same-origin on the website and can't be reached from the app's own origin.
+  if (new URLSearchParams(location.search).get('app') === 'ios') document.documentElement.classList.add('native-app');
   function tellHost(type, data = {}) {
     if (EMBED) window.parent.postMessage({ source: 'cloud-hopper', type, ...data }, location.origin);
   }
