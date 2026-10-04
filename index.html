@@ -2046,10 +2046,10 @@ let cloudShapes = null;
   // Primitive builders above serve as instant fallbacks while the GLBs stream in.
   const ANIMAL_DEFS = [
     { name: 'Fox',   emoji: '🦊', file: 'models/Fox.glb',   idle: 'Idle', run: 'Gallop', air: 'Gallop_Jump', fallback: buildFox,   scale: 0.55 },
-    { name: 'Cat',   emoji: '🐱', file: 'models/Cat.glb',   idle: 'Idle', run: 'Run',    air: 'Jump_Loop',   fallback: buildCat,   scale: 0.68 },
-    { name: 'Bunny', emoji: '🐰', file: 'models/Bunny.glb', idle: 'Idle', run: 'Run',    air: 'Jump_Idle',   fallback: buildBunny, scale: 0.55 },
+    { name: 'Cat',   emoji: '🐱', file: 'models/Cat.glb',   idle: 'Idle', run: 'Gallop', air: 'Gallop_Jump', fallback: buildCat,   scale: 0.46 },
+    { name: 'Bunny', emoji: '🐰', file: 'models/Bunny.glb', idle: 'Idle', run: 'Gallop', air: 'Gallop_Jump', fallback: buildBunny, scale: 0.42 },
     { name: 'Wolf',  emoji: '🐺', file: 'models/Wolf.glb',  idle: 'Idle', run: 'Gallop', air: 'Gallop_Jump', fallback: buildBear,  scale: 0.55 },
-    { name: 'Panda', emoji: '🐼', file: 'models/Panda.glb', idle: 'Idle', run: 'Run',    air: 'Jump_Idle',   fallback: buildPanda, scale: 0.55 },
+    { name: 'Panda', emoji: '🐼', file: 'models/Panda.glb', idle: 'Idle', run: 'Gallop', air: 'Gallop_Jump', fallback: buildPanda, scale: 0.62 },
     { name: 'Dog',   emoji: '🐶', file: 'models/Dog.glb',   idle: 'Idle', run: 'Gallop', air: 'Gallop_Jump', fallback: buildDog,   scale: 0.55 }
   ];
 
@@ -2123,8 +2123,9 @@ let cloudShapes = null;
     Fox:   { mats: ['Main', 'Main_Light'], len: 0.018, freq: 170 },
     Wolf:  { mats: ['Main', 'Main_Light'], len: 0.022, freq: 150 },
     Dog:   { mats: ['Main', 'Main_Light'], len: 0.015, freq: 180 },
-    Cat:   { mats: ['AtlasMaterial'],      len: 0.013, freq: 200, lumMask: true },
-    Bunny: { mats: ['Bunny_Main'],         len: 0.017, freq: 190 }
+    Cat:   { mats: ['Main', 'Main_Light', 'Grey'], len: 0.012, freq: 190 },
+    Bunny: { mats: ['Main', 'Main_Light', 'Grey'], len: 0.013, freq: 200 },
+    Panda: { mats: ['Main', 'Main_Light'], len: 0.016, freq: 170 }
   };
   const FUR_SHELLS = 10;
   function furPatch(shader) {
@@ -2132,7 +2133,6 @@ let cloudShapes = null;
     shader.uniforms.uShellH = { value: f.h };
     shader.uniforms.uFurLen = { value: f.len };
     shader.uniforms.uFurFreq = { value: f.freq };
-    shader.uniforms.uLumMask = { value: f.lumMask ? 1 : 0 };
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
         uniform float uShellH, uFurLen, uFurFreq;
@@ -2144,7 +2144,7 @@ let cloudShapes = null;
         transformed += normalize(normal) * uFurLen * uShellH;`);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
-        uniform float uShellH, uLumMask;
+        uniform float uShellH;
         varying vec3 vFurP;
         float furHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
         float furNoise(vec3 x) {
@@ -2159,7 +2159,6 @@ let cloudShapes = null;
           // smooth two-octave value noise: organic clumps, no grid lines
           float n = furNoise(vFurP) * 0.6 + furNoise(vFurP * 2.9 + 7.3) * 0.4;
           if (n < 0.12 + uShellH * 0.78) discard;
-          if (uLumMask > 0.5 && dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11)) < 0.06) discard;
           diffuseColor.rgb *= mix(0.6, 1.1, uShellH);
         }`);
   }
@@ -2177,8 +2176,7 @@ let cloudShapes = null;
         m.userData.fur = {
           h: i / FUR_SHELLS,
           len: size * cfg.len,
-          freq: cfg.freq / size,
-          lumMask: !!cfg.lumMask
+          freq: cfg.freq / size
         };
         m.roughness = 0.95;
         m.onBeforeCompile = furPatch;

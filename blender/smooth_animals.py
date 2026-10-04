@@ -13,8 +13,9 @@ argv = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
 SRC, DST = argv[0], argv[1]
 os.makedirs(DST, exist_ok=True)
 
-# Bunny is already dense (8k tris) — smooth shading only
-SUBDIV = {'Fox': 1, 'Cat': 1, 'Wolf': 1, 'Dog': 1, 'Panda': 1, 'Bunny': 0}
+# Cat, Bunny and Panda arrive from make_animals.py already subdivided (their markings were
+# painted at that resolution), so they are only shaded here.
+SUBDIV = {'Fox': 1, 'Cat': 0, 'Wolf': 1, 'Dog': 1, 'Panda': 0, 'Bunny': 0}
 
 for name, level in SUBDIV.items():
     src = os.path.join(SRC, f'{name}.glb')
@@ -47,16 +48,9 @@ for name, level in SUBDIV.items():
             sub.quality = 3
             bpy.ops.object.modifier_move_to_index(modifier='Subdiv', index=0)
         bpy.ops.object.shade_smooth()
-    # natural coat colors (linear RGB) where the stock palette looks toy-like
-    RECOLOR = {'Bunny': {'Bunny_Main': (0.26, 0.18, 0.11)}}
     for mat in bpy.data.materials:
         if not mat.use_nodes:
             continue
-        rc = RECOLOR.get(name, {}).get(mat.name)
-        if rc:
-            for n in mat.node_tree.nodes:
-                if n.type == 'BSDF_PRINCIPLED':
-                    n.inputs['Base Color'].default_value = (*rc, 1)
         for n in mat.node_tree.nodes:
             if n.type == 'BSDF_PRINCIPLED':
                 n.inputs['Roughness'].default_value = 0.88
@@ -65,9 +59,8 @@ for name, level in SUBDIV.items():
                 if 'eye' in mat.name.lower():
                     n.inputs['Roughness'].default_value = 0.15
     # keep only the clips the game plays (idle / run / air / death) — one action each
-    KEEP = {'Fox': ('Idle', 'Gallop', 'Gallop_Jump', 'Death'), 'Wolf': ('Idle', 'Gallop', 'Gallop_Jump', 'Death'),
-            'Dog': ('Idle', 'Gallop', 'Gallop_Jump', 'Death'), 'Cat': ('Idle', 'Run', 'Jump_Loop', 'Death'),
-            'Bunny': ('Idle', 'Run', 'Jump_Idle', 'Death'), 'Panda': ('Idle', 'Run', 'Jump_Idle', 'Death')}[name]
+    # (Cat, Bunny and Panda are built from the Fox / Shiba rigs by make_animals.py, so they share clips)
+    KEEP = ('Idle', 'Gallop', 'Gallop_Jump', 'Death')
     chosen = {}
     for act in sorted(bpy.data.actions, key=lambda a: len(a.name)):
         base = act.name.split('|')[-1].strip()
@@ -83,6 +76,7 @@ for name, level in SUBDIV.items():
     bpy.ops.export_scene.gltf(
         filepath=out, export_format='GLB', export_apply=True,
         export_animations=True, export_skins=True, export_yup=True,
-        export_animation_mode='ACTIONS', export_optimize_animation_size=True
+        export_animation_mode='ACTIONS', export_optimize_animation_size=True,
+        export_vertex_color='ACTIVE'   # the Cat's tabby stripes; the others have no color attribute
     )
     print(f'SMOOTHED {name}: {tris_before} faces before, subdiv {level} -> {out} ({os.path.getsize(out)//1024} KB)')
